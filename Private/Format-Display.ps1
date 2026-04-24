@@ -409,12 +409,7 @@ function Write-ServerPanel {
     Write-AnsiLine ($p.BorderBright + $b.TJL + ($b.H * $inner) + $b.TJR)
 
     # --- Session rows --------------------------------------------------------
-    $sortExpressions = @(
-        @{ Expression = { $_.State -ne [LISSTech.Wts.WtsConnectState]::Active } }
-        @{ Expression = { $_.IdleTime }; Descending = $true }
-        'Username'
-    )
-    $sorted = $Sessions | Sort-Object -Property $sortExpressions
+    $sorted = Get-SortedSessionsForDisplay -Sessions $Sessions
 
     foreach ($session in $sorted) {
         Write-AnsiLine (Format-SessionRow -Session $session -InnerWidth $inner)

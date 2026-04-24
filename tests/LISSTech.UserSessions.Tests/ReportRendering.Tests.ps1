@@ -481,6 +481,50 @@ Describe 'Get-MarkdownSafe / markdown injection hardening' {
     }
 }
 
+Describe 'Dashboard shares sort helper with report (C7)' {
+
+    It 'Write-ServerPanel calls Get-SortedSessionsForDisplay and has no Sort-Object of its own' {
+        $path = Join-Path $ProjectRoot 'Private/Format-Display.ps1'
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$null, [ref]$null)
+        $func = $ast.FindAll({
+            param($n)
+            $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Write-ServerPanel'
+        }, $true) | Select-Object -First 1
+
+        $func | Should -Not -BeNullOrEmpty
+
+        $commandNames = $func.Body.FindAll({
+            param($n) $n -is [System.Management.Automation.Language.CommandAst]
+        }, $true) | ForEach-Object { $_.GetCommandName() }
+
+        $commandNames | Should -Contain 'Get-SortedSessionsForDisplay'
+        $commandNames | Should -Not -Contain 'Sort-Object'
+    }
+
+    It 'Get-SortedSessionsForDisplay orders active-first, idle desc, username asc' {
+        # Hand-computed expected ordering:
+        #   alice: Active, idle 30m       (Active, largest idle)
+        #   bob:   Active, idle 5m        (Active, smaller idle)
+        #   carol: Disconnected, idle 60m (Non-active, larger idle)
+        #   dave:  Disconnected, idle 10m (Non-active, smaller idle)
+        #   eve:   Active, idle 5m, eve < bob alphabetically within the same active+idle bucket
+        # Actually: active-first is primary key, then idle desc, then username asc.
+        # So within Active+idle=5m, 'bob' < 'eve'.
+        $sessions = @(
+            (New-FakeSession -Username 'eve'   -State ([LISSTech.Wts.WtsConnectState]::Active)       -IdleTime (New-TimeSpan -Minutes 5))
+            (New-FakeSession -Username 'bob'   -State ([LISSTech.Wts.WtsConnectState]::Active)       -IdleTime (New-TimeSpan -Minutes 5))
+            (New-FakeSession -Username 'alice' -State ([LISSTech.Wts.WtsConnectState]::Active)       -IdleTime (New-TimeSpan -Minutes 30))
+            (New-FakeSession -Username 'carol' -State ([LISSTech.Wts.WtsConnectState]::Disconnected) -IdleTime (New-TimeSpan -Minutes 60))
+            (New-FakeSession -Username 'dave'  -State ([LISSTech.Wts.WtsConnectState]::Disconnected) -IdleTime (New-TimeSpan -Minutes 10))
+        )
+        $sorted = & (Get-Module LISSTech.UserSessions) {
+            param($s) Get-SortedSessionsForDisplay -Sessions $s
+        } $sessions
+
+        $sorted.Username | Should -Be @('alice', 'bob', 'eve', 'carol', 'dave')
+    }
+}
+
 AfterAll {
     Remove-Module LISSTech.UserSessions -Force -ErrorAction SilentlyContinue
 }
