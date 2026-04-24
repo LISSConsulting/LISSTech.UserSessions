@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LISSTech.UserSessions — Terminal Services, Respectfully.</title>
+<meta name="description" content="Enumerate, audit, and log off Windows Terminal Services sessions across Active Directory. Dashboard, async parallel logoff, ticket-ready reports.">
+<style>
+  /* ================================================================
+     RETROBRUTAL + BAROQUE + STARRY NIGHT
+     ================================================================
+     Palette drawn from Van Gogh's Starry Night:
+       - Deep night sky:    #0b1026, #1a1b4b, #2d3a8c
+       - Swirling cobalt:   #3b5998, #4a6fa5
+       - Luminous stars:    #f0c75e, #ffd866, #fff4b8
+       - Cypress dark:      #1b3a2d, #2d5a3d
+       - Moon glow:         #e8dcc8, #f5f0e3
+       - Village warm:      #c49a6c, #8b6914
+     Retrobrutal bones: thick borders, offset shadows, chunky type.
+     Baroque soul: ornamental frames, dramatic contrast, flourishes.
+  ================================================================ */
+
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400;1,700&family=JetBrains+Mono:wght@500;700;800&family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+  :root {
+    --night-deep:    #0b1026;
+    --night-mid:     #1a1b4b;
+    --night-blue:    #2d3a8c;
+    --cobalt:        #3b5998;
+    --cobalt-light:  #4a6fa5;
+    --star-gold:     #f0c75e;
+    --star-bright:   #ffd866;
+    --star-pale:     #fff4b8;
+    --cypress:       #1b3a2d;
+    --cypress-light: #2d5a3d;
+    --moon:          #e8dcc8;
+    --moon-light:    #f5f0e3;
+    --village:       #c49a6c;
+    --ochre:         #8b6914;
+    --ink:           #000000;
+    --white:         #ffffff;
+    --red:           #c0392b;
+    --green-glow:    #7fd865;
+
+    --shadow:        6px 6px 0 var(--ink);
+    --shadow-lg:     10px 10px 0 var(--ink);
+    --shadow-gold:   6px 6px 0 var(--ochre);
+    --border:        3px solid var(--ink);
+    --border-lg:     4px solid var(--ink);
+    --border-gold:   3px solid var(--ochre);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background: var(--night-deep);
+    color: var(--moon-light);
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  .serif { font-family: "Playfair Display", "Georgia", serif; }
+  .mono  { font-family: "JetBrains Mono", "Cascadia Mono", monospace; font-variant-numeric: tabular-nums; }
+
+  /* ============================================================ STARFIELD */
+  .starfield {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    pointer-events: none;
+    z-index: 0;
+    overflow: hidden;
+  }
+  .starfield::before {
+    content: '';
+    position: absolute;
+    top: -50%; left: -50%;
+    width: 200%; height: 200%;
+    background:
+      radial-gradient(1.5px 1.5px at 20% 30%, var(--star-gold) 50%, transparent 100%),
+      radial-gradient(1px 1px at 40% 70%, var(--star-pale) 50%, transparent 100%),
+      radial-gradient(1.5px 1.5px at 60% 20%, var(--star-bright) 50%, transparent 100%),
+      radial-gradient(1px 1px at 80% 50%, var(--star-gold) 50%, transparent 100%),
+      radial-gradient(1px 1px at 10% 80%, var(--star-pale) 50%, transparent 100%),
+      radial-gradient(2px 2px at 50% 10%, var(--star-bright) 50%, transparent 100%),
+      radial-gradient(1px 1px at 70% 85%, var(--star-gold) 50%, transparent 100%),
+      radial-gradient(1.5px 1.5px at 30% 55%, var(--star-pale) 50%, transparent 100%),
+      radial-gradient(1px 1px at 90% 15%, var(--star-bright) 50%, transparent 100%),
+      radial-gradient(1px 1px at 15% 45%, var(--star-gold) 50%, transparent 100%),
+      radial-gradient(2px 2px at 85% 75%, var(--star-pale) 50%, transparent 100%),
+      radial-gradient(1px 1px at 45% 90%, var(--star-bright) 50%, transparent 100%);
+    animation: drift 120s linear infinite;
+  }
+  @keyframes drift {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+
+  .page { position: relative; z-index: 1; }
+
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 2rem;
+  }
+
+  /* ============================================================ BAROQUE NAV */
+  nav {
+    background: var(--night-mid);
+    border-bottom: var(--border-lg);
+    padding: 0.8rem 0;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: 0 4px 0 var(--ink);
+  }
+  nav .container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  nav .logo {
+    font-family: "Playfair Display", serif;
+    font-weight: 900;
+    font-size: 1.15rem;
+    color: var(--star-gold);
+    letter-spacing: -0.02em;
+    text-decoration: none;
+  }
+  nav .logo span {
+    color: var(--moon-light);
+    font-weight: 400;
+    font-style: italic;
+  }
+  nav ul {
+    list-style: none;
+    display: flex;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+  }
+  nav a {
+    color: var(--moon);
+    text-decoration: none;
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.35em 0.75em;
+    border: 2px solid transparent;
+    transition: all 0.15s;
+  }
+  nav a:hover {
+    color: var(--star-gold);
+    border-color: var(--star-gold);
+  }
+
+  /* ============================================================ HERO */
+  .hero {
+    padding: 6rem 0 5rem;
+    text-align: center;
+    background:
+      radial-gradient(ellipse 80% 50% at 50% 0%, rgba(45,58,140,0.4) 0%, transparent 100%),
+      radial-gradient(ellipse 60% 40% at 30% 20%, rgba(59,89,152,0.2) 0%, transparent 100%);
+  }
+  .hero-badge {
+    display: inline-block;
+    background: var(--night-mid);
+    border: var(--border);
+    box-shadow: var(--shadow-gold);
+    padding: 0.3em 1em;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--star-gold);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 2rem;
+  }
+  .hero h1 {
+    font-family: "Playfair Display", serif;
+    font-size: clamp(2.5rem, 6vw, 4.5rem);
+    font-weight: 900;
+    line-height: 1.05;
+    letter-spacing: -0.03em;
+    color: var(--white);
+    margin-bottom: 0.5rem;
+  }
+  .hero h1 em {
+    font-style: italic;
+    color: var(--star-gold);
+  }
+  .hero .subtitle {
+    font-family: "Playfair Display", serif;
+    font-size: clamp(1rem, 2.5vw, 1.35rem);
+    font-weight: 400;
+    font-style: italic;
+    color: var(--moon);
+    margin-bottom: 2.5rem;
+    max-width: 640px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .hero-actions {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  /* ============================================================ BUTTONS */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+    padding: 0.85em 1.8em;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.9rem;
+    font-weight: 700;
+    text-decoration: none;
+    border: var(--border-lg);
+    cursor: pointer;
+    transition: transform 0.1s, box-shadow 0.1s;
+    letter-spacing: 0.02em;
+  }
+  .btn:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 8px 8px 0 var(--ink);
+  }
+  .btn:active {
+    transform: translate(2px, 2px);
+    box-shadow: 2px 2px 0 var(--ink);
+  }
+  .btn-primary {
+    background: var(--star-gold);
+    color: var(--ink);
+    box-shadow: var(--shadow);
+  }
+  .btn-secondary {
+    background: var(--night-mid);
+    color: var(--star-pale);
+    box-shadow: var(--shadow);
+  }
+
+  /* ============================================================ INSTALL STRIP */
+  .install-strip {
+    background: var(--night-mid);
+    border-top: var(--border-lg);
+    border-bottom: var(--border-lg);
+    padding: 1.5rem 0;
+    text-align: center;
+  }
+  .install-cmd {
+    display: inline-flex;
+    align-items: center;
+    gap: 1rem;
+    background: var(--night-deep);
+    border: var(--border);
+    box-shadow: var(--shadow-gold);
+    padding: 1rem 1.8rem;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--star-pale);
+  }
+  .install-cmd .prompt {
+    color: var(--cobalt-light);
+    user-select: none;
+  }
+  .install-cmd .cmdlet {
+    color: var(--star-gold);
+  }
+
+  /* ============================================================ FEATURES */
+  .features {
+    padding: 5rem 0;
+  }
+  .section-header {
+    text-align: center;
+    margin-bottom: 3rem;
+  }
+  .section-header h2 {
+    font-family: "Playfair Display", serif;
+    font-size: 2.2rem;
+    font-weight: 900;
+    color: var(--white);
+    margin-bottom: 0.5rem;
+  }
+  .section-header .ornament {
+    display: inline-block;
+    width: 80px;
+    height: 3px;
+    background: var(--star-gold);
+    margin: 0.75rem auto;
+    box-shadow: 2px 2px 0 var(--ochre);
+  }
+  .section-header p {
+    font-family: "Playfair Display", serif;
+    font-style: italic;
+    color: var(--moon);
+    font-size: 1.05rem;
+    max-width: 500px;
+    margin: 0 auto;
+  }
+
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1.5rem;
+  }
+  .feature-card {
+    background: var(--night-mid);
+    border: var(--border-lg);
+    box-shadow: var(--shadow);
+    padding: 2rem 1.75rem;
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .feature-card:hover {
+    transform: translate(-3px, -3px);
+    box-shadow: 13px 13px 0 var(--ink);
+  }
+  .feature-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 4px;
+    background: linear-gradient(90deg, var(--star-gold), var(--cobalt-light), var(--star-bright));
+  }
+  .feature-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 3.2rem;
+    height: 3.2rem;
+    background: var(--night-deep);
+    border: var(--border);
+    box-shadow: 3px 3px 0 var(--ochre);
+    font-size: 1.5rem;
+    margin-bottom: 1.25rem;
+  }
+  .feature-card h3 {
+    font-family: "Playfair Display", serif;
+    font-size: 1.25rem;
+    font-weight: 900;
+    color: var(--star-pale);
+    margin-bottom: 0.6rem;
+  }
+  .feature-card p {
+    font-size: 0.9rem;
+    color: var(--moon);
+    line-height: 1.55;
+  }
+  .feature-card code {
+    background: var(--night-deep);
+    color: var(--star-gold);
+    padding: 0.1em 0.4em;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.82rem;
+    font-weight: 700;
+    border: 1px solid var(--cobalt);
+  }
+
+  /* ============================================================ CMDLETS */
+  .cmdlets {
+    padding: 5rem 0;
+    background:
+      linear-gradient(180deg, transparent 0%, rgba(26,27,75,0.5) 20%, rgba(26,27,75,0.5) 80%, transparent 100%);
+  }
+  .cmdlet-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1.5rem;
+  }
+  .cmdlet-card {
+    background: var(--night-deep);
+    border: var(--border-lg);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .cmdlet-card:hover {
+    transform: translate(-3px, -3px);
+    box-shadow: 13px 13px 0 var(--ink);
+  }
+  .cmdlet-header {
+    background: var(--cobalt);
+    padding: 1rem 1.5rem;
+    border-bottom: var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  .cmdlet-name {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 1.05rem;
+    font-weight: 800;
+    color: var(--white);
+  }
+  .cmdlet-verb {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.2em 0.6em;
+    background: var(--star-gold);
+    color: var(--ink);
+    border: 2px solid var(--ink);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .cmdlet-body {
+    padding: 1.5rem;
+  }
+  .cmdlet-body p {
+    font-size: 0.9rem;
+    color: var(--moon);
+    margin-bottom: 1rem;
+  }
+  .cmdlet-body .example {
+    background: var(--night-mid);
+    border: 2px solid var(--cobalt);
+    padding: 0.85rem 1rem;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--star-pale);
+    overflow-x: auto;
+    white-space: pre;
+    line-height: 1.5;
+  }
+  .cmdlet-body .example .comment {
+    color: var(--cobalt-light);
+  }
+
+  /* ============================================================ ARCHITECTURE */
+  .architecture {
+    padding: 5rem 0;
+  }
+  .arch-frame {
+    background: var(--night-mid);
+    border: var(--border-lg);
+    box-shadow: var(--shadow-lg);
+    padding: 2.5rem;
+    position: relative;
+  }
+  .arch-frame::before,
+  .arch-frame::after {
+    content: '❧';
+    position: absolute;
+    font-size: 1.5rem;
+    color: var(--star-gold);
+    opacity: 0.6;
+  }
+  .arch-frame::before { top: 0.5rem; left: 1rem; }
+  .arch-frame::after  { bottom: 0.5rem; right: 1rem; transform: rotate(180deg); }
+
+  .arch-flow {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0;
+    align-items: stretch;
+  }
+  .arch-step {
+    text-align: center;
+    padding: 1.5rem 0.75rem;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .arch-step:not(:last-child)::after {
+    content: '→';
+    position: absolute;
+    right: -0.6rem;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 1.4rem;
+    font-weight: 900;
+    color: var(--star-gold);
+    z-index: 1;
+  }
+  .arch-node {
+    width: 3.5rem;
+    height: 3.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.3rem;
+    border: var(--border);
+    box-shadow: 3px 3px 0 var(--ochre);
+    flex-shrink: 0;
+  }
+  .arch-node.blue   { background: var(--cobalt); }
+  .arch-node.gold   { background: var(--star-gold); color: var(--ink); }
+  .arch-node.green  { background: var(--cypress-light); }
+  .arch-node.red    { background: var(--red); }
+  .arch-node.purple { background: var(--night-blue); }
+  .arch-label {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--moon);
+    line-height: 1.3;
+    letter-spacing: 0.02em;
+  }
+  .arch-sublabel {
+    font-size: 0.65rem;
+    font-weight: 500;
+    color: var(--cobalt-light);
+    font-style: italic;
+    font-family: "Inter", sans-serif;
+  }
+
+  /* ============================================================ REPORTS SHOWCASE */
+  .reports {
+    padding: 5rem 0;
+    background:
+      linear-gradient(180deg, transparent 0%, rgba(26,27,75,0.5) 20%, rgba(26,27,75,0.5) 80%, transparent 100%);
+  }
+  .report-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+  }
+  @media (max-width: 700px) {
+    .report-grid { grid-template-columns: 1fr; }
+  }
+  .report-card {
+    background: var(--night-deep);
+    border: var(--border-lg);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .report-card:hover {
+    transform: translate(-3px, -3px);
+    box-shadow: 13px 13px 0 var(--ink);
+  }
+  .report-card-header {
+    padding: 1.25rem 1.5rem;
+    border-bottom: var(--border);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .report-card-header.md { background: var(--cypress-light); }
+  .report-card-header.html { background: var(--cobalt); }
+  .report-card-header h3 {
+    font-family: "Playfair Display", serif;
+    font-size: 1.15rem;
+    font-weight: 900;
+    color: var(--white);
+  }
+  .report-card-header .format-tag {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.72rem;
+    font-weight: 700;
+    background: var(--star-gold);
+    color: var(--ink);
+    border: 2px solid var(--ink);
+    padding: 0.15em 0.5em;
+    letter-spacing: 0.08em;
+  }
+  .report-card-body {
+    padding: 1.5rem;
+  }
+  .report-card-body p {
+    font-size: 0.88rem;
+    color: var(--moon);
+    margin-bottom: 0.8rem;
+    line-height: 1.5;
+  }
+  .report-card-body ul {
+    list-style: none;
+    padding: 0;
+  }
+  .report-card-body li {
+    font-size: 0.85rem;
+    color: var(--moon);
+    padding: 0.25em 0;
+    padding-left: 1.2em;
+    position: relative;
+  }
+  .report-card-body li::before {
+    content: '✦';
+    position: absolute;
+    left: 0;
+    color: var(--star-gold);
+    font-size: 0.7em;
+  }
+
+  /* ============================================================ SAFETY */
+  .safety {
+    padding: 5rem 0;
+  }
+  .safety-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.25rem;
+  }
+  .safety-item {
+    background: var(--night-mid);
+    border: var(--border);
+    box-shadow: var(--shadow);
+    padding: 1.5rem;
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .safety-item:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 8px 8px 0 var(--ink);
+  }
+  .safety-icon {
+    flex-shrink: 0;
+    width: 2.5rem;
+    height: 2.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--night-deep);
+    border: 2px solid var(--cobalt);
+    font-size: 1.1rem;
+    box-shadow: 2px 2px 0 var(--ochre);
+  }
+  .safety-item h4 {
+    font-family: "Playfair Display", serif;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--star-pale);
+    margin-bottom: 0.3rem;
+  }
+  .safety-item p {
+    font-size: 0.82rem;
+    color: var(--moon);
+    line-height: 1.45;
+  }
+
+  /* ============================================================ FOOTER */
+  footer.site-footer {
+    background: var(--night-mid);
+    border-top: var(--border-lg);
+    padding: 2.5rem 0;
+  }
+  footer .container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+  .footer-brand {
+    font-family: "Playfair Display", serif;
+    font-weight: 900;
+    font-size: 1.2rem;
+    color: var(--star-gold);
+  }
+  .footer-brand span {
+    font-weight: 400;
+    font-style: italic;
+    color: var(--moon);
+    font-size: 0.85rem;
+  }
+  .footer-links {
+    display: flex;
+    gap: 1.25rem;
+    flex-wrap: wrap;
+  }
+  .footer-links a {
+    color: var(--moon);
+    text-decoration: none;
+    font-size: 0.82rem;
+    font-weight: 600;
+    transition: color 0.15s;
+  }
+  .footer-links a:hover { color: var(--star-gold); }
+  .footer-copy {
+    width: 100%;
+    text-align: center;
+    margin-top: 1.25rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--cobalt);
+    font-size: 0.75rem;
+    color: var(--cobalt-light);
+  }
+  .footer-copy code {
+    font-family: "JetBrains Mono", monospace;
+    background: var(--night-deep);
+    color: var(--star-gold);
+    padding: 0.1em 0.35em;
+    font-size: 0.75rem;
+    border: 1px solid var(--cobalt);
+  }
+
+  /* ============================================================ ORNAMENTS */
+  .flourish {
+    text-align: center;
+    font-size: 1.3rem;
+    color: var(--star-gold);
+    opacity: 0.4;
+    padding: 1.5rem 0;
+    letter-spacing: 0.5em;
+    user-select: none;
+  }
+
+  /* ============================================================ RESPONSIVE */
+  @media (max-width: 600px) {
+    .hero { padding: 4rem 0 3rem; }
+    .arch-step:not(:last-child)::after { display: none; }
+    .arch-flow { grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+    nav ul { gap: 0.1rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="starfield"></div>
+
+<div class="page">
+
+  <!-- NAV -->
+  <nav>
+    <div class="container">
+      <a href="#" class="logo">LISSTech<span>.UserSessions</span></a>
+      <ul>
+        <li><a href="#features">Features</a></li>
+        <li><a href="#cmdlets">API</a></li>
+        <li><a href="#architecture">Architecture</a></li>
+        <li><a href="#reports">Reports</a></li>
+        <li><a href="#safety">Safety</a></li>
+        <li><a href="https://github.com/LISSConsulting/LISSTech.UserSessions">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="container">
+      <div class="hero-badge">PowerShell 5.1+ &middot; Windows Server 2016+ &middot; Zero Dependencies</div>
+      <h1>Terminal Services,<br><em>Respectfully.</em></h1>
+      <p class="subtitle">Enumerate, audit, and log off Windows sessions across Active Directory &mdash; with a rich dashboard, async parallel logoff, and ticket-ready reports.</p>
+      <div class="hero-actions">
+        <a href="https://github.com/LISSConsulting/LISSTech.UserSessions" class="btn btn-primary">View on GitHub</a>
+        <a href="https://www.powershellgallery.com/packages/LISSTech.UserSessions" class="btn btn-secondary">PSGallery</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- INSTALL STRIP -->
+  <div class="install-strip">
+    <div class="install-cmd">
+      <span class="prompt">PS&gt;</span>
+      <span><span class="cmdlet">Install-Module</span> LISSTech.UserSessions</span>
+    </div>
+  </div>
+
+  <div class="flourish">&#10045; &middot; &#10045; &middot; &#10045;</div>
+
+  <!-- FEATURES -->
+  <section class="features" id="features">
+    <div class="container">
+      <div class="section-header">
+        <h2>Features</h2>
+        <div class="ornament"></div>
+        <p>Everything an MSP needs for session management, nothing it doesn't.</p>
+      </div>
+      <div class="feature-grid">
+
+        <div class="feature-card">
+          <div class="feature-icon">&#9881;</div>
+          <h3>WTS Win32 P/Invoke</h3>
+          <p>Direct <code>WTSEnumerateSessions</code> calls &mdash; no <code>quser.exe</code> parsing fragility, no locale bugs, no truncated session IDs.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">&#9889;</div>
+          <h3>Parallel Scanning</h3>
+          <p>RunspacePool fan-out scans hundreds of servers concurrently. Throttle-controlled, PS 5.1-compatible. No <code>ForEach-Object -Parallel</code> required.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">&#9731;</div>
+          <h3>Zero Dependencies</h3>
+          <p>Pure PowerShell + built-in .NET. No ActiveDirectory RSAT module. Runs out-of-box on any domain-joined Windows host.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">&#9733;</div>
+          <h3>ANSI Dashboard</h3>
+          <p>256-color terminal UI with box-drawing panels, status glyphs, idle-time heat coloring, and Cylon-style async logoff progress bars.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">&#9998;</div>
+          <h3>Ticket-Ready Reports</h3>
+          <p>Markdown (clipboard) and self-contained neobrutal HTML (browser). Paste directly into HaloPSA, ConnectWise, or any ticket system.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">&#9888;</div>
+          <h3>Disabled User Detection</h3>
+          <p>Flags sessions for disabled AD accounts &mdash; the gap between disabling an account and ending its sessions. Offboarding visibility built in.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <div class="flourish">&#10045; &middot; &#10045; &middot; &#10045;</div>
+
+  <!-- CMDLETS -->
+  <section class="cmdlets" id="cmdlets">
+    <div class="container">
+      <div class="section-header">
+        <h2>PowerShell API</h2>
+        <div class="ornament"></div>
+        <p>Three cmdlets. One domain. Complete control.</p>
+      </div>
+      <div class="cmdlet-grid">
+
+        <div class="cmdlet-card">
+          <div class="cmdlet-header">
+            <span class="cmdlet-name">Find-UserSession</span>
+            <span class="cmdlet-verb">Find</span>
+          </div>
+          <div class="cmdlet-body">
+            <p>Emit session objects for pipeline composition. Filter by user, OU, computer, or LDAP query.</p>
+            <div class="example"><span class="comment"># Find idle disconnected sessions</span>
+Find-UserSession -Username jmariano |
+  Where-Object { $_.IdleTime.TotalDays -gt 7 }</div>
+          </div>
+        </div>
+
+        <div class="cmdlet-card">
+          <div class="cmdlet-header">
+            <span class="cmdlet-name">Show-UserSession</span>
+            <span class="cmdlet-verb">Show</span>
+          </div>
+          <div class="cmdlet-body">
+            <p>Rich dashboard with optional async logoff and report generation. The daily driver.</p>
+            <div class="example"><span class="comment"># Scan, logoff, report — one command</span>
+Show-UserSession -LogOff -Confirm:$false `
+  -Report markdown</div>
+          </div>
+        </div>
+
+        <div class="cmdlet-card">
+          <div class="cmdlet-header">
+            <span class="cmdlet-name">Stop-UserSession</span>
+            <span class="cmdlet-verb">Stop</span>
+          </div>
+          <div class="cmdlet-body">
+            <p>Pipeline-bound single-session logoff with full ShouldProcess support. Surgical precision.</p>
+            <div class="example"><span class="comment"># Pipe stale sessions to logoff</span>
+Find-UserSession |
+  Where-Object State -eq Disconnected |
+  Stop-UserSession -Confirm:$false</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <div class="flourish">&#10045; &middot; &#10045; &middot; &#10045;</div>
+
+  <!-- ARCHITECTURE -->
+  <section class="architecture" id="architecture">
+    <div class="container">
+      <div class="section-header">
+        <h2>Architecture</h2>
+        <div class="ornament"></div>
+        <p>From AD discovery to dashboard render &mdash; the data pipeline.</p>
+      </div>
+      <div class="arch-frame">
+        <div class="arch-flow">
+          <div class="arch-step">
+            <div class="arch-node blue">&#127918;</div>
+            <div class="arch-label">Module</div>
+            <div class="arch-sublabel">.psm1 + .psd1</div>
+          </div>
+          <div class="arch-step">
+            <div class="arch-node gold">&#128269;</div>
+            <div class="arch-label">Scan</div>
+            <div class="arch-sublabel">orchestrator</div>
+          </div>
+          <div class="arch-step">
+            <div class="arch-node green">&#127970;</div>
+            <div class="arch-label">AD Lookup</div>
+            <div class="arch-sublabel">DirectorySearcher</div>
+          </div>
+          <div class="arch-step">
+            <div class="arch-node purple">&#9881;</div>
+            <div class="arch-label">WTS API</div>
+            <div class="arch-sublabel">Win32 P/Invoke</div>
+          </div>
+          <div class="arch-step">
+            <div class="arch-node blue">&#128230;</div>
+            <div class="arch-label">Sessions</div>
+            <div class="arch-sublabel">typed objects</div>
+          </div>
+          <div class="arch-step">
+            <div class="arch-node gold">&#127912;</div>
+            <div class="arch-label">Render</div>
+            <div class="arch-sublabel">dashboard / report</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="flourish">&#10045; &middot; &#10045; &middot; &#10045;</div>
+
+  <!-- REPORTS -->
+  <section class="reports" id="reports">
+    <div class="container">
+      <div class="section-header">
+        <h2>Reports</h2>
+        <div class="ornament"></div>
+        <p>Ticket-ready artifacts, generated in one command.</p>
+      </div>
+      <div class="report-grid">
+
+        <div class="report-card">
+          <div class="report-card-header md">
+            <h3>Markdown</h3>
+            <span class="format-tag">MD</span>
+          </div>
+          <div class="report-card-body">
+            <p>Clean GitHub/HaloPSA-friendly tables. Copies straight to clipboard by default.</p>
+            <ul>
+              <li>Operator identity &amp; timestamp</li>
+              <li>Scope description</li>
+              <li>Per-server session tables</li>
+              <li>Logoff result tally</li>
+              <li>Disabled user section</li>
+              <li>Offline &amp; errored hosts</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="report-card">
+          <div class="report-card-header html">
+            <h3>Neobrutal HTML</h3>
+            <span class="format-tag">HTML</span>
+          </div>
+          <div class="report-card-body">
+            <p>Self-contained single-file document. Pastes as formatted content via CF_HTML clipboard.</p>
+            <ul>
+              <li>Thick borders, flat colors, heavy shadows</li>
+              <li>900-weight chunky typography</li>
+              <li>Color-coded session states</li>
+              <li>Logoff result banner card</li>
+              <li>Print-to-PDF ready</li>
+              <li>No external dependencies</li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <div class="flourish">&#10045; &middot; &#10045; &middot; &#10045;</div>
+
+  <!-- SAFETY -->
+  <section class="safety" id="safety">
+    <div class="container">
+      <div class="section-header">
+        <h2>Safety First</h2>
+        <div class="ornament"></div>
+        <p>Guardrails baked into every destructive path.</p>
+      </div>
+      <div class="safety-grid">
+
+        <div class="safety-item">
+          <div class="safety-icon">&#11088;</div>
+          <div>
+            <h4>Own-Session Guard</h4>
+            <p>Logoff commands skip your current session unconditionally. You cannot log yourself out.</p>
+          </div>
+        </div>
+
+        <div class="safety-item">
+          <div class="safety-icon">&#129514;</div>
+          <div>
+            <h4>ShouldProcess</h4>
+            <p>Full <code>-WhatIf</code> and <code>-Confirm</code> support. Bulk logoffs use a single batch-level confirmation prompt.</p>
+          </div>
+        </div>
+
+        <div class="safety-item">
+          <div class="safety-icon">&#128274;</div>
+          <div>
+            <h4>Read-Only Default</h4>
+            <p><code>Show-UserSession</code> without <code>-LogOff</code> is pure display. No side effects, ever.</p>
+          </div>
+        </div>
+
+        <div class="safety-item">
+          <div class="safety-icon">&#128220;</div>
+          <div>
+            <h4>Audit Trail</h4>
+            <p>Reports include operator identity, timestamp, scope, and outcome counts. Attach to tickets for compliance.</p>
+          </div>
+        </div>
+
+        <div class="safety-item">
+          <div class="safety-icon">&#127760;</div>
+          <div>
+            <h4>No External Deps</h4>
+            <p>Pure PowerShell + built-in .NET. No network calls, no telemetry, no supply chain risk.</p>
+          </div>
+        </div>
+
+        <div class="safety-item">
+          <div class="safety-icon">&#9888;</div>
+          <div>
+            <h4>Offboarding Visibility</h4>
+            <p>Disabled AD accounts with live sessions are flagged in both dashboard and reports. Find the gaps.</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <div class="flourish">&#10045; &middot; &#10045; &middot; &#10045;</div>
+
+  <!-- FOOTER -->
+  <footer class="site-footer">
+    <div class="container">
+      <div class="footer-brand">LISS <span>Technologies</span></div>
+      <div class="footer-links">
+        <a href="https://github.com/LISSConsulting/LISSTech.UserSessions">GitHub</a>
+        <a href="https://www.powershellgallery.com/packages/LISSTech.UserSessions">PSGallery</a>
+        <a href="https://github.com/LISSConsulting/LISSTech.UserSessions/blob/trunk/LICENSE">Apache 2.0</a>
+      </div>
+      <div class="footer-copy">
+        <code>LISSTech.UserSessions</code> &middot; LISS Consulting, Corp. &middot; Terminal Services, respectfully.
+      </div>
+    </div>
+  </footer>
+
+</div>
+
+</body>
+</html>
