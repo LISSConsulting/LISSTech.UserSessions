@@ -1241,72 +1241,98 @@ $script:LogoffWorker = {
     })
 }
 
+$script:LogoffCol = [ordered]@{
+    PRI = 3; SERVER = 18; USER = 18; SESSION = 12; TASK = 22; ELAPSED = 7; RESULT = 30
+}
+
+function Format-LogoffHeaderRow {
+    $p = $script:Palette
+    $cells = foreach ($col in $script:LogoffCol.Keys) {
+        $w = $script:LogoffCol[$col]
+        $color = if ($col -eq 'SERVER') { $p.Warning } else { $p.Header }
+        $color + (Format-Fixed -Text $col -Width $w) + $p.Reset
+    }
+    ' ' + ($cells -join ' ')
+}
+
+function Format-LogoffDividerRow {
+    $p = $script:Palette
+    $cells = foreach ($col in $script:LogoffCol.Keys) {
+        $w = $script:LogoffCol[$col]
+        $p.TitleDim + ('─' * $w) + $p.Reset
+    }
+    ' ' + ($cells -join ' ')
+}
+
 function Format-LogoffRow {
-    param($Target, [int]$InnerWidth)
+    <#
+    .SYNOPSIS
+        Flat row for the async logoff view. Columns:
+          PRI SERVER USER SESSION TASK ELAPSED RESULT
+        PRI: '  ' while running, '* ' (gold/scanner) never used here because
+        the caller already excludes IsCurrent sessions. '!! ' when the row
+        is a disabled-user session (surfaced for operator visibility).
+        TASK: Cylon bar while running; solid bar on success; error text on fail.
+    #>
+    param($Target)
 
     $p = $script:Palette
-    $b = $script:Box
+    $W = $script:LogoffCol
 
-    # Choose elapsed source: ticking clock for running, frozen for done/fail
     $elapsed = switch ($Target.Status) {
         'running' { [DateTime]::UtcNow - $Target.Started }
         default   { $Target.Elapsed }
     }
 
-    $userCol = Format-Fixed -Text $Target.Username -Width 18
-    $srvCol  = Format-Fixed -Text $Target.Server   -Width 22
-    $idCol   = Format-Fixed -Text "id $($Target.SessionId)" -Width 8
-    $timeCol = Format-Duration -Span $elapsed
+    # PRI gutter — disabled-user sessions still deserve a warning glyph
+    $isDisabled = [bool]$Target.IsUserDisabled
+    $priGlyph, $priColor = if ($isDisabled) { '!!', $p.Error } else { '  ', $p.TitleDim }
 
-    # Status column (progress bar, full bar, or error text)
-    $statusCol, $mark, $timeColor = switch ($Target.Status) {
+    # TASK column — Cylon bar while running, solid on OK, '—' on fail (error
+    # goes in RESULT, not here, to avoid duplication).
+    $taskColor, $taskText = switch ($Target.Status) {
         'running' {
             $bar = Format-CylonBar -ElapsedSec $elapsed.TotalSeconds
-            @(
-                ($p.Scanner + '[' + $p.Reset + $bar + $p.Scanner + ']' + $p.Reset)
-                '  '
-                $p.TitleDim
-            )
+            @($p.Scanner, ('[' + $bar + ']'))
             break
         }
         'ok' {
-            $bar = $p.Success + ('█' * $script:BarWidth) + $p.Reset
-            @(
-                ($p.Success + '[' + $p.Reset + $bar + $p.Success + ']' + $p.Reset)
-                ($p.Success + '✓ ' + $p.Reset)
-                $p.Success
-            )
+            @($p.Success, ('[' + ('█' * $script:BarWidth) + ']'))
             break
         }
         'fail' {
-            $raw = $Target.Error
-            $maxErrWidth = $script:BarWidth + 2
-            $errText = switch ($raw.Length -gt $maxErrWidth) {
-                $true  { $raw.Substring(0, $maxErrWidth - 1) + '.' }
-                $false { $raw.PadRight($maxErrWidth) }
-            }
-            @(
-                ($p.Error + $errText + $p.Reset)
-                ($p.Error + '✗ ' + $p.Reset)
-                $p.Error
-            )
+            @($p.TitleDim, '—')
         }
     }
 
-    $body = (
-        ' ' +
-        $p.Username    + $userCol + $p.Reset + '  ' +
-        $p.WinStation  + $srvCol  + $p.Reset + '  ' +
-        $p.SessionId   + $idCol   + $p.Reset + '  ' +
-        $statusCol + '  ' +
-        $timeColor + $timeCol + $p.Reset + ' ' +
-        $mark
+    # RESULT column — '—' while running, 'OK' on success, error text on fail
+    $resultColor, $resultText = switch ($Target.Status) {
+        'running' { @($p.TitleDim, '—'); break }
+        'ok'      { @($p.Success,  'OK'); break }
+        'fail'    {
+            $err = if ($null -eq $Target.Error) { 'failed' } else { $Target.Error }
+            @($p.Error, $err)
+        }
+    }
+
+    $userColor  = if ($isDisabled) { $p.Error } else { $p.Username }
+    $timeColor  = switch ($Target.Status) {
+        'running' { $p.TitleDim }
+        'ok'      { $p.Success }
+        'fail'    { $p.Error }
+    }
+    $timeText = Format-Duration -Span $elapsed
+
+    $cells = @(
+        $priColor      + (Format-Fixed -Text $priGlyph   -Width $W.PRI)     + $p.Reset
+        $p.Server      + (Format-Fixed -Text $Target.Server   -Width $W.SERVER)  + $p.Reset
+        $userColor     + (Format-Fixed -Text $Target.Username -Width $W.USER)    + $p.Reset
+        $p.WinStation  + (Format-Fixed -Text ("id$($Target.SessionId)") -Width $W.SESSION) + $p.Reset
+        $taskColor     + (Format-Fixed -Text $taskText -Width $W.TASK)    + $p.Reset
+        $timeColor     + (Format-Fixed -Text $timeText -Width $W.ELAPSED) + $p.Reset
+        $resultColor   + (Format-Fixed -Text $resultText -Width $W.RESULT) + $p.Reset
     )
-
-    $padding = $InnerWidth - (Get-VisibleLength $body)
-    if ($padding -lt 0) { $padding = 0 }
-
-    $p.BorderBright + $b.V + $body + (' ' * $padding) + $p.BorderBright + $b.V
+    ' ' + ($cells -join ' ')
 }
 
 function Start-AsyncLogoff {
@@ -1332,47 +1358,42 @@ function Start-AsyncLogoff {
         if ($Sessions.Count -eq 0) { return }
 
         $p = $script:Palette
-        $b = $script:Box
-        $inner = $script:PanelWidth - 2
 
-        # --- Panel header ----------------------------------------------------
-        $titleText = " LOGOFF · $($Sessions.Count) session(s) "
-        $dashCount = $inner - $titleText.Length - 1
-        if ($dashCount -lt 3) { $dashCount = 3 }
-
+        # --- One-line header --------------------------------------------------
+        $sessWord = if ($Sessions.Count -eq 1) { 'session' } else { 'sessions' }
         Write-Blank
         Write-AnsiLine (
-            $p.BorderBright + $b.TL + $b.H +
-            $p.Bold + $p.Warning + $titleText + $p.Reset +
-            $p.BorderBright + ($b.H * $dashCount) + $b.TR
+            ' ' + $p.Bold + $p.Warning + 'LOGOFF' + $p.Reset +
+            '  ' + $p.TitleDim + ('{0} {1}' -f $Sessions.Count, $sessWord) + $p.Reset
         )
+        Write-AnsiLine (Format-LogoffHeaderRow)
+        Write-AnsiLine (Format-LogoffDividerRow)
 
         # --- Build per-target state ------------------------------------------
         $targets = @()
         $index = 0
         foreach ($session in $Sessions) {
             $targets += [pscustomobject]@{
-                Key       = $index
-                Server    = $session.Server
-                SessionId = $session.SessionId
-                Username  = $session.Username
-                State     = $session.State
-                Status    = 'running'
-                Started   = [DateTime]::UtcNow
-                Elapsed   = [TimeSpan]::Zero
-                LoggedOff = $false
-                Error     = $null
+                Key            = $index
+                Server         = $session.Server
+                SessionId      = $session.SessionId
+                Username       = $session.Username
+                State          = $session.State
+                IsUserDisabled = [bool]$session.IsUserDisabled
+                Status         = 'running'
+                Started        = [DateTime]::UtcNow
+                Elapsed        = [TimeSpan]::Zero
+                LoggedOff      = $false
+                Error          = $null
             }
             $index++
         }
 
-        # Reserve one line per target + draw the bottom border up front.
-        # The repaint loop will scroll back over (rowCount + 1) lines so the
-        # bottom border stays visible while rows update in place.
+        # Reserve one line per target. Repaint loop scrolls back exactly
+        # rowCount lines — no chrome below the rows.
         foreach ($target in $targets) {
-            Write-AnsiLine (Format-LogoffRow -Target $target -InnerWidth $inner)
+            Write-AnsiLine (Format-LogoffRow -Target $target)
         }
-        Write-AnsiLine ($p.BorderBright + $b.BL + ($b.H * $inner) + $b.BR)
 
         # --- Dispatch --------------------------------------------------------
         $queue = New-Object System.Collections.Concurrent.ConcurrentQueue[object]
@@ -1393,9 +1414,8 @@ function Start-AsyncLogoff {
             }
         }
 
-        $rowCount   = $targets.Count
-        $scrollUp   = $rowCount + 1   # include the bottom border in the scroll window
-        $bottomLine = $p.BorderBright + $b.BL + ($b.H * $inner) + $b.BR + $p.Reset
+        $rowCount = $targets.Count
+        $scrollUp = $rowCount   # no bottom chrome; scroll back exactly to first row
 
         try {
             # Repaint loop
@@ -1412,10 +1432,8 @@ function Start-AsyncLogoff {
                 $buffer = "$script:CSI$scrollUp`F"
                 foreach ($t in $targets) {
                     $buffer += "$script:CSI" + '2K'
-                    $buffer += (Format-LogoffRow -Target $t -InnerWidth $inner) + $p.Reset + "`n"
+                    $buffer += (Format-LogoffRow -Target $t) + $p.Reset + "`n"
                 }
-                # Re-emit the bottom border so it stays in place between ticks.
-                $buffer += "$script:CSI" + '2K' + $bottomLine + "`n"
                 [Console]::Out.Write($buffer)
 
                 Start-Sleep -Milliseconds 55
@@ -1434,9 +1452,8 @@ function Start-AsyncLogoff {
             $buffer = "$script:CSI$scrollUp`F"
             foreach ($t in $targets) {
                 $buffer += "$script:CSI" + '2K'
-                $buffer += (Format-LogoffRow -Target $t -InnerWidth $inner) + $p.Reset + "`n"
+                $buffer += (Format-LogoffRow -Target $t) + $p.Reset + "`n"
             }
-            $buffer += "$script:CSI" + '2K' + $bottomLine + "`n"
             [Console]::Out.Write($buffer)
         } finally {
             foreach ($job in $jobs) {
