@@ -389,6 +389,34 @@ Describe 'Resolve-ReportFilePath' {
     }
 }
 
+Describe 'Get-LocalHostAliasSet' {
+
+    It 'Includes MachineName' {
+        $set = & (Get-Module LISSTech.UserSessions) { Get-LocalHostAliasSet }
+        $set.Contains([Environment]::MachineName) | Should -BeTrue
+    }
+
+    It 'Includes localhost' {
+        $set = & (Get-Module LISSTech.UserSessions) { Get-LocalHostAliasSet }
+        $set.Contains('localhost') | Should -BeTrue
+    }
+
+    It 'Includes 127.0.0.1' {
+        $set = & (Get-Module LISSTech.UserSessions) { Get-LocalHostAliasSet }
+        $set.Contains('127.0.0.1') | Should -BeTrue
+    }
+
+    It 'Includes ::1' {
+        $set = & (Get-Module LISSTech.UserSessions) { Get-LocalHostAliasSet }
+        $set.Contains('::1') | Should -BeTrue
+    }
+
+    It 'Is case-insensitive for LoCaLhOsT' {
+        $set = & (Get-Module LISSTech.UserSessions) { Get-LocalHostAliasSet }
+        $set.Contains('LoCaLhOsT') | Should -BeTrue
+    }
+}
+
 AfterAll {
     Remove-Module LISSTech.UserSessions -Force -ErrorAction SilentlyContinue
 }

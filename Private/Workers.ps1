@@ -36,7 +36,7 @@ $script:PingScript = {
 # ============================================================================
 
 $script:ScanScript = {
-    param($server, $knownUsers, $disabledUsers, $counter, $localMachine, $localUser, $localSessionId)
+    param($server, $knownUsers, $disabledUsers, $counter, $localAliases, $localUser, $localSessionId)
 
     $sessions = [System.Collections.Generic.List[object]]::new()
     $scanError = $null
@@ -72,7 +72,8 @@ $script:ScanScript = {
 
         $structSize = [System.Runtime.InteropServices.Marshal]::SizeOf(
             [type][LISSTech.Wts.WTS_SESSION_INFO])
-        $isServerLocal = $server.Name -ieq $localMachine
+        $candidate = ($server.Name -replace '%\d+$', '').TrimEnd('.')
+        $isServerLocal = $localAliases.Contains($candidate)
 
         for ($i = 0; $i -lt $sessionCount; $i++) {
             $basicPtr = [IntPtr]::Add($ppSessionInfo, $i * $structSize)

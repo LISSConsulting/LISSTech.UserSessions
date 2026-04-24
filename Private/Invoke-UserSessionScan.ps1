@@ -1,4 +1,51 @@
-﻿function Invoke-UserSessionScan {
+﻿function Get-LocalHostAliasSet {
+    $set = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase)
+
+    function Add-Normalized {
+        param($S, $Value)
+        if ([string]::IsNullOrWhiteSpace($Value)) { return }
+        $n = $Value.TrimEnd('.')
+        $n = $n -replace '%\d+$', ''
+        [void]$S.Add($n)
+    }
+
+    Add-Normalized $set 'localhost'
+    Add-Normalized $set '.'
+    Add-Normalized $set '127.0.0.1'
+    Add-Normalized $set '::1'
+    Add-Normalized $set ([Environment]::MachineName)
+    Add-Normalized $set ([System.Net.Dns]::GetHostName())
+
+    $userDns = $env:USERDNSDOMAIN
+    if ($userDns) {
+        Add-Normalized $set ("{0}.{1}" -f [Environment]::MachineName, $userDns)
+    }
+
+    try {
+        foreach ($nic in [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
+            if ($nic.OperationalStatus -ne 'Up') { continue }
+            foreach ($ua in $nic.GetIPProperties().UnicastAddresses) {
+                Add-Normalized $set $ua.Address.ToString()
+            }
+        }
+    } catch {
+        Write-Debug "NetworkInterface enumeration failed: $($_.Exception.Message)"
+    }
+
+    try {
+        $hostEntry = [System.Net.Dns]::GetHostEntry([Environment]::MachineName)
+        Add-Normalized $set $hostEntry.HostName
+        foreach ($alias in $hostEntry.Aliases)      { Add-Normalized $set $alias }
+        foreach ($ip    in $hostEntry.AddressList)  { Add-Normalized $set $ip.ToString() }
+    } catch {
+        Write-Debug "Dns.GetHostEntry failed: $($_.Exception.Message)"
+    }
+
+    return ,$set
+}
+
+function Invoke-UserSessionScan {
     <#
     .SYNOPSIS
         Shared scan orchestrator: resolves users and computers, filters for
@@ -165,14 +212,14 @@
         Write-Debug "Invoke-UserSessionScan → enumerating sessions on $($computers.Count) host(s)"
 
         $scanCounter    = New-Object 'System.Collections.Concurrent.ConcurrentBag[int]'
-        $localMachine   = [Environment]::MachineName
+        $localAliases   = Get-LocalHostAliasSet
         $localUser      = [Environment]::UserName
         $localSessionId = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
 
         $scanParams = @{
             InputObject      = $computers
             ScriptBlock      = $script:ScanScript
-            SharedArgs       = @($userSet, $disabledSet, $scanCounter, $localMachine, $localUser, $localSessionId)
+            SharedArgs       = @($userSet, $disabledSet, $scanCounter, $localAliases, $localUser, $localSessionId)
             ThrottleLimit    = $ThrottleLimit
             ProgressActivity = ($ProgressActivityPrefix + 'Enumerating WTS sessions')
             ProgressCounter  = $scanCounter
