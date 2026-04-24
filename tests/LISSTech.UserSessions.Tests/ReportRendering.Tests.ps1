@@ -417,6 +417,32 @@ Describe 'Get-LocalHostAliasSet' {
     }
 }
 
+Describe 'Set-ClipboardHtml (PS7 MTA path)' {
+
+    # -Skip: is evaluated at Pester discovery (before BeforeAll), so environment
+    # probes that depend on the imported module type don't work there. Use
+    # Set-ItResult -Skipped at runtime instead.
+
+    It 'ClipboardBridge type loaded at module import' {
+        if (-not ($IsWindows -or $PSVersionTable.PSEdition -eq 'Desktop')) {
+            Set-ItResult -Skipped -Because 'not Windows — bridge is Windows-only'
+            return
+        }
+        'LISSTech.UserSessions.ClipboardBridge' -as [type] | Should -Not -BeNullOrEmpty
+    }
+
+    It 'succeeds on MTA apartment via ClipboardBridge' {
+        if (-not ('LISSTech.UserSessions.ClipboardBridge' -as [type])) {
+            Set-ItResult -Skipped -Because 'ClipboardBridge unavailable (pwsh without Microsoft.WindowsDesktop.App)'
+            return
+        }
+        # On PS7 the default apartment is MTA — the bridge is the only way this succeeds.
+        { & (Get-Module LISSTech.UserSessions) {
+            param($h) Set-ClipboardHtml -Html $h
+        } '<b>test</b>' } | Should -Not -Throw
+    }
+}
+
 AfterAll {
     Remove-Module LISSTech.UserSessions -Force -ErrorAction SilentlyContinue
 }

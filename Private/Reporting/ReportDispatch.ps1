@@ -9,6 +9,47 @@
 # renderer stack without touching the filesystem or user's clipboard.
 # -----------------------------------------------------------------------------
 
+# ============================================================================
+# ClipboardBridge: pure-C# helper for PS7 MTA clipboard access.
+#
+# On PS7 the default apartment is MTA, but [Windows.Forms.Clipboard] requires
+# STA. Running a PowerShell scriptblock on a bare STA thread fails because
+# the thread has no attached runspace. Solution: emit a C# class whose
+# ThreadStart is a pure CLR delegate — no PowerShell on the worker thread,
+# so no runspace required. Idempotent across re-imports.
+# ============================================================================
+
+if (-not ('LISSTech.UserSessions.ClipboardBridge' -as [type])) {
+    try {
+        Add-Type -ReferencedAssemblies System.Windows.Forms, System.Threading.Thread -TypeDefinition @'
+using System;
+using System.Threading;
+using System.Windows.Forms;
+
+namespace LISSTech.UserSessions {
+    public static class ClipboardBridge {
+        public static void SetHtml(string html) {
+            Exception captured = null;
+            Thread t = new Thread(delegate() {
+                try {
+                    Clipboard.SetText(html, TextDataFormat.Html);
+                } catch (Exception ex) {
+                    captured = ex;
+                }
+            });
+            t.SetApartmentState(ApartmentState.STA);
+            t.Start();
+            t.Join();
+            if (captured != null) throw captured;
+        }
+    }
+}
+'@
+    } catch {
+        Write-Debug "ClipboardBridge Add-Type failed (likely pwsh without Microsoft.WindowsDesktop.App): $($_.Exception.Message)"
+    }
+}
+
 function Set-ClipboardHtml {
     <#
     .SYNOPSIS
@@ -37,15 +78,11 @@ function Set-ClipboardHtml {
         return
     }
 
-    $thread = [System.Threading.Thread]::new([System.Threading.ThreadStart]{
-        [System.Windows.Forms.Clipboard]::SetText(
-            $Html,
-            [System.Windows.Forms.TextDataFormat]::Html
-        )
-    })
-    $thread.SetApartmentState([System.Threading.ApartmentState]::STA)
-    $thread.Start()
-    $thread.Join()
+    if (-not ('LISSTech.UserSessions.ClipboardBridge' -as [type])) {
+        throw [System.PlatformNotSupportedException]::new(
+            'HTML clipboard unavailable: Windows Forms runtime (Microsoft.WindowsDesktop.App) not present in this PowerShell edition.')
+    }
+    [LISSTech.UserSessions.ClipboardBridge]::SetHtml($Html)
 }
 
 function Resolve-ReportClipboardDecision {
