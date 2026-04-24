@@ -1,0 +1,38 @@
+# Build output
+dist/
+*.zip
+*.nupkg
+
+# Environment
+.env
+.env.local
+*.local
+
+# OS / IDE detritus
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~
+
+# PowerShell
+*.ps1.bak
+*.pssc.bak
+PSScriptAnalyzerSettings.bak
+
+# Pester coverage
+coverage.xml
+TestResults/
+testResults.xml
+
+# Code signing
+*.pfx
+*.p12
+*.cer
+!scripts/*.cer
+
+# Temp report artifacts
+UserSession-Report-*.md
+UserSession-Report-*.html

@@ -1,0 +1,885 @@
+﻿# -----------------------------------------------------------------------------
+# Display primitives for LISSTech.UserSessions
+#
+# Design constraints:
+#   * Windows Server 2016 conhost with VT processing enabled
+#   * Consolas font coverage (no braille, no rounded corners)
+#   * 256-color ANSI for richer styling than Write-Host -ForegroundColor
+#
+# The async logoff view uses ANSI cursor positioning to repaint rows in
+# place, docker-pull style: each session gets a Cylon progress bar while
+# in flight, then flips to a final ✓/✗ state on completion.
+# -----------------------------------------------------------------------------
+
+# ============================================================================
+# Console encoding + VT enable
+# ============================================================================
+#
+# Two independent things have to be right for this module's output:
+#
+#   1. Console OutputEncoding must be UTF-8. Server 2016 conhost defaults to
+#      the OEM codepage (437 or 1252), which maps our 3-byte UTF-8 glyphs
+#      (●, ○, ★, ◆, ⚠, box-drawing chars) to single '?' bytes on write.
+#      Setting [Console]::OutputEncoding forces the runtime to encode
+#      strings as UTF-8 before handing them to WriteFile.
+#
+#   2. VT processing (ENABLE_VIRTUAL_TERMINAL_PROCESSING, flag 0x0004) must
+#      be on so the console interprets ESC[...m and cursor-movement escapes
+#      as formatting instead of printing them literally.
+#
+# Both are set unconditionally at module import; cheap, idempotent.
+
+try {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    Write-Debug 'Format-Display → OutputEncoding set to UTF-8'
+} catch {
+    Write-Debug "Format-Display → OutputEncoding set failed: $($_.Exception.Message)"
+}
+
+if (-not ('LISSTech.UserSessions.VT' -as [type])) {
+    Write-Debug 'Format-Display → registering VT interop type'
+
+    Add-Type -Namespace 'LISSTech.UserSessions.Session' -Name 'VT' -MemberDefinition @'
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError=true)]
+        public static extern System.IntPtr GetStdHandle(int nStdHandle);
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError=true)]
+        public static extern bool GetConsoleMode(System.IntPtr hConsoleHandle, out uint lpMode);
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError=true)]
+        public static extern bool SetConsoleMode(System.IntPtr hConsoleHandle, uint dwMode);
+'@
+}
+
+try {
+    $stdOut = [LISSTech.UserSessions.VT]::GetStdHandle(-11)
+    $mode   = 0
+    if ([LISSTech.UserSessions.VT]::GetConsoleMode($stdOut, [ref]$mode)) {
+        [void][LISSTech.UserSessions.VT]::SetConsoleMode($stdOut, $mode -bor 0x0004)
+        Write-Debug 'Format-Display → VT processing enabled'
+    }
+} catch {
+    Write-Debug "Format-Display → VT enable failed: $($_.Exception.Message)"
+}
+
+# ============================================================================
+# Module-scope constants
+# ============================================================================
+
+$script:ESC         = [char]27
+$script:CSI         = "$script:ESC["
+$script:PanelWidth  = 96          # outer width of all panels
+$script:BarWidth    = 20          # Cylon scanner length
+$script:TimeWidth   = 5           # fixed width for all elapsed strings
+
+# Column widths for the session table. Defined once so the header row and
+# the data rows can't drift out of alignment — a bug class that has bitten
+# us before. The "lead" is the prefix before USER (the mark + separator).
+# Header prepends '  ' (2 spaces) where rows use 1 space + mark + 1 space
+# = 3 chars, so header's USER width must be 1 greater than row's to align
+# STATE and everything after it.
+$script:Col = @{
+    RowLead     = 3    # ' ' + mark + ' '
+    HeadLead    = 2    # '  '
+    Username    = 20
+    UserGap     = 2    # spaces between username cell and STATE
+    State       = 7
+    WinStation  = 14
+    SessionId   = 9
+    Idle        = 15
+    LogonFull   = 19   # "M/d/yyyy h:mm tt" worst case
+    LogonShort  = 13   # truncated when ⚠ DISABLED badge appends
+}
+
+# Box-drawing glyphs (all in Consolas — no rounded variants)
+$script:Box = @{
+    H     = '─'; V    = '│'
+    TL    = '┌'; TR   = '┐'; BL  = '└'; BR  = '┘'
+    TJL   = '├'; TJR  = '┤'; TJT = '┬'; TJB = '┴'
+    Cross = '┼'
+}
+
+# 256-color palette, tuned for dark terminals with Consolas
+$script:Palette = @{
+    BorderDim    = "${script:CSI}38;5;238m"
+    BorderBright = "${script:CSI}38;5;67m"
+    TitleFg      = "${script:CSI}38;5;117m"
+    TitleDim     = "${script:CSI}38;5;244m"
+    Header       = "${script:CSI}38;5;231m"      # bright white for column headers
+    Username     = "${script:CSI}38;5;252m"
+    Active       = "${script:CSI}38;5;114m"
+    ActiveBright = "${script:CSI}38;5;156m"
+    Disc         = "${script:CSI}38;5;179m"
+    DiscBright   = "${script:CSI}38;5;215m"
+    Current      = "${script:CSI}38;5;213m"
+    WinStation   = "${script:CSI}38;5;109m"
+    SessionId    = "${script:CSI}38;5;145m"
+    IdleDim      = "${script:CSI}38;5;244m"
+    IdleHot      = "${script:CSI}38;5;203m"
+    Logon        = "${script:CSI}38;5;244m"
+    Success      = "${script:CSI}38;5;114m"
+    Warning      = "${script:CSI}38;5;179m"
+    Error        = "${script:CSI}38;5;203m"
+    Info         = "${script:CSI}38;5;109m"
+    Scanner      = "${script:CSI}38;5;81m"
+    ScannerDim   = "${script:CSI}38;5;24m"
+    Reset        = "${script:CSI}0m"
+    Bold         = "${script:CSI}1m"
+    Dim          = "${script:CSI}2m"
+}
+
+# ============================================================================
+# String primitives
+# ============================================================================
+
+function Get-VisibleLength {
+    <# Returns the visible (printable) length of a string, stripping ANSI. #>
+    param([string]$Text)
+
+    if ([string]::IsNullOrEmpty($Text)) { return 0 }
+    return ([regex]::Replace($Text, "$script:ESC\[[0-9;]*[A-Za-z]", '')).Length
+}
+
+function Format-Fixed {
+    <# Pads or truncates (with trailing '.') to exactly $Width chars. #>
+    param(
+        [AllowNull()][string]$Text,
+        [Parameter(Mandatory)][int]$Width,
+        [switch]$Right
+    )
+
+    if ($null -eq $Text) { $Text = '' }
+
+    if ($Text.Length -gt $Width) {
+        if ($Width -le 1) { return '.' }
+        return $Text.Substring(0, $Width - 1) + '.'
+    }
+
+    if ($Right) { $Text.PadLeft($Width) } else { $Text.PadRight($Width) }
+}
+
+function Format-Duration {
+    <#
+    Formats a TimeSpan as a compact fixed-width string (width = TimeWidth):
+        "  5ms"   " 43ms"   "340ms"   " 1.2s"   "12.3s"   "  40s"
+
+    Discipline: all durations render at exactly TimeWidth chars so columns
+    align regardless of magnitude. 40s takes less space than 23ms in the
+    raw format, but both occupy 5 chars once padded.
+    #>
+    param([TimeSpan]$Span)
+
+    $ms = $Span.TotalMilliseconds
+    $raw = switch ($ms) {
+        ({ $_ -lt 1000  }) { '{0:N0}ms' -f $_ ; break }
+        ({ $_ -lt 10000 }) { '{0:N1}s'  -f ($_ / 1000) ; break }
+        ({ $_ -lt 60000 }) { '{0:N0}s'  -f ($_ / 1000) ; break }
+        default            { '{0:N0}m'  -f ($_ / 60000) }
+    }
+    return $raw.PadLeft($script:TimeWidth)
+}
+
+function Format-IdleSpan {
+    <# Idle-time column in session rows (width varies; no padding here). #>
+    param([TimeSpan]$Span)
+
+    switch ($Span) {
+        ({ $_ -le [TimeSpan]::FromMinutes(1) }) { '-'; break }
+        ({ $_.TotalDays  -ge 1 })               { '{0}+{1:D2}:{2:D2}' -f [math]::Floor($_.TotalDays), $_.Hours, $_.Minutes; break }
+        ({ $_.TotalHours -ge 1 })               { '{0}:{1:D2}' -f $_.Hours, $_.Minutes; break }
+        default                                 { '{0}m' -f [math]::Floor($_.TotalMinutes) }
+    }
+}
+
+function Format-State {
+    <# Abbreviates a WtsConnectState for the STATE column. #>
+    param([LISSTech.Wts.WtsConnectState]$State)
+
+    switch ($State) {
+        'Disconnected' { 'Disc' }
+        'Connected'    { 'Conn' }
+        'ConnectQuery' { 'ConnQ' }
+        default        { [string]$State }
+    }
+}
+
+function Format-CylonBar {
+    <#
+    Knight Rider / Cylon scanner: lead block with trailing glow that bounces
+    left-right across the bar. Used for indeterminate progress since
+    WTSLogoffSession has no progress API.
+
+        [░▒▓█       ]   [    █▓▒░   ]   [       █▓▒░]
+    #>
+    param(
+        [double]$ElapsedSec,
+        [int]$Width = $script:BarWidth
+    )
+
+    $cycle = 2 * $Width
+    $pos   = [int]([math]::Floor($ElapsedSec * 18) % $cycle)
+    $isGoingRight = $pos -lt $Width
+    $lead  = if ($isGoingRight) { $pos } else { $cycle - 1 - $pos }
+
+    $chars = [char[]]('░' * $Width)
+    $trail = @('▒', '▓', '█')
+
+    for ($i = 0; $i -lt $trail.Count; $i++) {
+        $offset = $trail.Count - 1 - $i
+        $idx = if ($isGoingRight) { $lead - $offset } else { $lead + $offset }
+        if ($idx -ge 0 -and $idx -lt $Width) {
+            $chars[$idx] = $trail[$i]
+        }
+    }
+
+    -join $chars
+}
+
+# ============================================================================
+# Write helpers
+# ============================================================================
+
+function Write-Blank {
+    [Console]::Out.WriteLine('')
+}
+
+function Write-AnsiLine {
+    <# Emits a pre-composed string with terminal reset + newline. #>
+    param([string]$Text)
+    [Console]::Out.WriteLine($Text + $script:Palette.Reset)
+}
+
+# ============================================================================
+# Banner + scan progress
+# ============================================================================
+
+function Write-Banner {
+    <#
+        Three-line banner:
+          line 1: module name (bold) + version (dim), right-aligned "LISS Technologies"
+          line 2: tagline describing what the tool does
+          line 3: runtime context — caller@host, PS edition/version, timestamp
+
+        All values computed at call-time so version updates follow the
+        manifest automatically.
+    #>
+    $p = $script:Palette
+    $b = $script:Box
+    $inner = $script:PanelWidth - 2
+
+    $moduleName = 'LISSTech.UserSessions.Session'
+    $version    = (Get-Module LISSTech.UserSessions).Version
+    $versionStr = if ($version) { "v$version" } else { 'v?' }
+    $brand      = 'LISS Technologies'
+
+    $tagline    = 'Enumerate, audit, and log off Terminal Services sessions across AD.'
+
+    $who   = '{0}@{1}' -f [Environment]::UserName, [Environment]::MachineName
+    $psEd  = if ($PSVersionTable.PSEdition) { $PSVersionTable.PSEdition } else { 'Desktop' }
+    $psVer = $PSVersionTable.PSVersion.ToString()
+    $now   = Get-Date -Format 'yyyy-MM-dd HH:mm'
+    $context = '{0}  ·  PS {1} {2}  ·  {3}' -f $who, $psEd, $psVer, $now
+
+    # --- Line 1: module name + version, right-aligned brand ------------------
+    $left1  = '  ' + $p.Bold + $p.TitleFg + $moduleName + $p.Reset + '  ' +
+              $p.TitleDim + $versionStr + $p.Reset
+    $right1 = $p.Bold + $p.Info + $brand + $p.Reset + '  '
+    $leftVis1  = Get-VisibleLength $left1
+    $rightVis1 = Get-VisibleLength $right1
+    $gap1 = $inner - $leftVis1 - $rightVis1
+    if ($gap1 -lt 1) { $gap1 = 1 }
+    $line1 = $left1 + (' ' * $gap1) + $right1
+
+    # --- Line 2: tagline -----------------------------------------------------
+    $line2raw = '  ' + $p.TitleDim + $tagline + $p.Reset
+    $pad2 = $inner - (Get-VisibleLength $line2raw)
+    if ($pad2 -lt 0) { $pad2 = 0 }
+    $line2 = $line2raw + (' ' * $pad2)
+
+    # --- Line 3: runtime context --------------------------------------------
+    $line3raw = '  ' + $p.Logon + $context + $p.Reset
+    $pad3 = $inner - (Get-VisibleLength $line3raw)
+    if ($pad3 -lt 0) { $pad3 = 0 }
+    $line3 = $line3raw + (' ' * $pad3)
+
+    Write-Blank
+    Write-AnsiLine ($p.BorderBright + $b.TL + ($b.H * $inner) + $b.TR)
+    Write-AnsiLine ($p.BorderBright + $b.V + $line1 + $p.BorderBright + $b.V)
+    Write-AnsiLine ($p.BorderBright + $b.V + $line2 + $p.BorderBright + $b.V)
+    Write-AnsiLine ($p.BorderBright + $b.V + $line3 + $p.BorderBright + $b.V)
+    Write-AnsiLine ($p.BorderBright + $b.BL + ($b.H * $inner) + $b.BR)
+    Write-Blank
+}
+
+function Write-Step {
+    <# One-line progress indicator under the banner. #>
+    param([string]$Label, [string]$Detail)
+
+    $p = $script:Palette
+    $parts = @(
+        '  '
+        $p.Success + '>' + $p.Reset
+        ' '
+        $p.TitleDim + (Format-Fixed -Text $Label -Width 22) + $p.Reset
+        ' '
+        $p.Logon + $Detail + $p.Reset
+    )
+    Write-AnsiLine (-join $parts)
+}
+
+# ============================================================================
+# Server panel
+# ============================================================================
+
+function Write-ServerPanel {
+    param(
+        [string]$Name,
+        [object[]]$Sessions
+    )
+
+    $p = $script:Palette
+    $b = $script:Box
+    $inner = $script:PanelWidth - 2
+
+    $count = $Sessions.Count
+    $activeCount = @($Sessions.Where({ $_.State -eq [LISSTech.Wts.WtsConnectState]::Active })).Count
+    $discCount   = $count - $activeCount
+
+    # --- Top border with embedded title and count chip -----------------------
+    $titleText = " $Name "
+
+    $chipParts = @()
+    if ($activeCount -gt 0) {
+        $chipParts += ($p.Active + '● ' + $p.Reset + $p.Username + $activeCount + $p.Reset)
+    }
+    if ($discCount -gt 0) {
+        $chipParts += ($p.Disc + '○ ' + $p.Reset + $p.Username + $discCount + $p.Reset)
+    }
+    if ($chipParts.Count -eq 0) {
+        $chipParts = @($p.TitleDim + 'empty' + $p.Reset)
+    }
+
+    $chip = (
+        $p.TitleDim + '[ ' + $p.Reset +
+        ($chipParts -join ($p.TitleDim + ' · ' + $p.Reset)) +
+        $p.TitleDim + ' ]' + $p.Reset
+    )
+
+    # Top border layout:  TL H title (H*n) SP chip SP H TR
+    # Visible chars summed: 1 + 1 + len(title) + n + 1 + chipVis + 1 + 1 + 1
+    # That must equal the outer PanelWidth. Solving for n:
+    #   n = PanelWidth - 6 - len(title) - chipVis
+    # Note: inner = PanelWidth - 2 (for the two side borders), so equivalently
+    #   n = inner - 4 - len(title) - chipVis
+    $titleVisible = $titleText.Length
+    $chipVisible  = Get-VisibleLength $chip
+    $dashCount    = $inner - 4 - $titleVisible - $chipVisible
+    if ($dashCount -lt 3) { $dashCount = 3 }
+
+    $topParts = @(
+        $p.BorderBright + $b.TL + $b.H
+        $p.Bold + $p.TitleFg + $titleText + $p.Reset
+        $p.BorderBright + ($b.H * $dashCount) + ' '
+        $chip
+        ' ' + $p.BorderBright + $b.H + $b.TR
+    )
+    Write-AnsiLine (-join $topParts)
+
+    # --- Column header row ---------------------------------------------------
+    # Header and row must put STATE (and every column after) at the same
+    # absolute x-position. Row lead is 3 chars (' ' + mark + ' '); header
+    # lead is 2 chars ('  '). To compensate, header's USER cell is 1 wider
+    # than the row's — that way STATE lands at the same column in both.
+    $c = $script:Col
+    $headerUserWidth = $c.Username + $c.UserGap + ($c.RowLead - $c.HeadLead)
+    $headerText = (
+        (' ' * $c.HeadLead) +
+        (Format-Fixed -Text 'USER'    -Width $headerUserWidth) +
+        (Format-Fixed -Text 'STATE'   -Width $c.State) +
+        (Format-Fixed -Text 'SESSION' -Width $c.WinStation) +
+        (Format-Fixed -Text 'ID'      -Width $c.SessionId) +
+        (Format-Fixed -Text 'IDLE'    -Width $c.Idle) +
+        'LOGON'
+    )
+    $headerPadded = Format-Fixed -Text $headerText -Width $inner
+    Write-AnsiLine (
+        $p.BorderBright + $b.V +
+        $p.Bold + $p.Header + $headerPadded + $p.Reset +
+        $p.BorderBright + $b.V
+    )
+
+    Write-AnsiLine ($p.BorderBright + $b.TJL + ($b.H * $inner) + $b.TJR)
+
+    # --- Session rows --------------------------------------------------------
+    $sortExpressions = @(
+        @{ Expression = { $_.State -ne [LISSTech.Wts.WtsConnectState]::Active } }
+        @{ Expression = { $_.IdleTime }; Descending = $true }
+        'Username'
+    )
+    $sorted = $Sessions | Sort-Object -Property $sortExpressions
+
+    foreach ($session in $sorted) {
+        Write-AnsiLine (Format-SessionRow -Session $session -InnerWidth $inner)
+    }
+
+    Write-AnsiLine ($p.BorderBright + $b.BL + ($b.H * $inner) + $b.BR)
+}
+
+function Format-SessionRow {
+    param($Session, [int]$InnerWidth)
+
+    $p = $script:Palette
+    $b = $script:Box
+
+    $isActive   = $Session.State -eq [LISSTech.Wts.WtsConnectState]::Active
+    $isDisabled = [bool]$Session.IsUserDisabled
+
+    # Mark glyph + color: star for caller's own session, filled circle for
+    # active, open circle for disconnected or anything else.
+    if ($Session.IsCurrent) {
+        $mark      = '★'
+        $markColor = $p.Current
+    } elseif ($isActive) {
+        $mark      = '●'
+        $markColor = $p.ActiveBright
+    } else {
+        $mark      = '○'
+        $markColor = $p.DiscBright
+    }
+
+    $stateColor = if ($isActive)   { $p.Active }   else { $p.Disc }
+    $userColor  = if ($isDisabled) { $p.Error }    else { $p.Username }
+
+    $winStation = if ([string]::IsNullOrWhiteSpace($Session.WinStation)) {
+        '-'
+    } else {
+        $Session.WinStation
+    }
+
+    $idleText  = Format-IdleSpan -Span $Session.IdleTime
+    $idleColor = if ($Session.IdleTime.TotalDays -ge 7) { $p.IdleHot } else { $p.IdleDim }
+
+    $logonText = if ($null -eq $Session.LogonTime) {
+        'unknown'
+    } else {
+        $Session.LogonTime.ToString('M/d/yyyy h:mm tt')
+    }
+
+    # Column-width ledger (visible chars only):
+    #   leading space           = 1
+    #   mark + space            = 2
+    #   username (fixed 20+2sp) = 22
+    #   state (fixed 7)         =  7
+    #   winstation (fixed 14)   = 14
+    #   session id (fixed 9)    =  9
+    #   idle (fixed 15)         = 15
+    #   logon (fixed 19)        = 19
+    #   disabled badge optional = 11 when present (' ⚠ DISABLED')
+    #   ------------------------------------------------
+    #   minimum body            = 89
+    #   with badge              = 100
+    # InnerWidth is PanelWidth - 2 = 94, so the badge pushes us 6 over.
+    # We truncate logon to 13 chars when a badge is present — enough for
+    # "4/22/2026 11:" which is unambiguous. Non-disabled rows get full
+    # 19-char logon like "4/22/2026 11:24 PM".
+    $logonWidth = if ($isDisabled) { $script:Col.LogonShort } else { $script:Col.LogonFull }
+
+    $disabledBadge = if ($isDisabled) {
+        ' ' + $p.Error + '⚠ DISABLED' + $p.Reset
+    } else {
+        ''
+    }
+
+    $c = $script:Col
+    $body = (
+        ' ' +
+        $markColor    + $mark + $p.Reset + ' ' +
+        $userColor    + (Format-Fixed -Text $Session.Username -Width $c.Username) + $p.Reset + (' ' * $c.UserGap) +
+        $stateColor   + (Format-Fixed -Text (Format-State $Session.State) -Width $c.State) + $p.Reset +
+        $p.WinStation + (Format-Fixed -Text $winStation -Width $c.WinStation) + $p.Reset +
+        $p.SessionId  + (Format-Fixed -Text "id$($Session.SessionId)" -Width $c.SessionId) + $p.Reset +
+        $idleColor    + (Format-Fixed -Text $idleText -Width $c.Idle) + $p.Reset +
+        $p.Logon      + (Format-Fixed -Text $logonText -Width $logonWidth) + $p.Reset +
+        $disabledBadge
+    )
+
+    $padding = $InnerWidth - (Get-VisibleLength $body)
+    if ($padding -lt 0) { $padding = 0 }
+
+    $p.BorderBright + $b.V + $body + (' ' * $padding) + $p.BorderBright + $b.V
+}
+
+# ============================================================================
+# Status bar (footer panel)
+# ============================================================================
+
+function Write-StatusBar {
+    param(
+        [int]$Scanned,
+        [int]$WithSessions,
+        [int]$Total,
+        [int]$Active,
+        [int]$Disc,
+        [int]$Other,
+        [int]$Unique,
+        [int]$Disabled,
+        [int]$Offline,
+        [object[]]$Errored = @(),
+        [TimeSpan]$Elapsed
+    )
+
+    $p = $script:Palette
+    $b = $script:Box
+    $inner = $script:PanelWidth - 2
+
+    Write-Blank
+    Write-AnsiLine ($p.BorderBright + $b.TL + ($b.H * $inner) + $b.TR)
+
+    # Line 1 — headline stats
+    $headline = (
+        ' ' +
+        $p.Bold + $p.TitleFg + 'SUMMARY' + $p.Reset + '  ' +
+        $p.TitleDim + ('{0} servers · {1} with sessions · {2:N1}s' -f $Scanned, $WithSessions, $Elapsed.TotalSeconds) + $p.Reset
+    )
+    $pad = $inner - (Get-VisibleLength $headline)
+    if ($pad -lt 0) { $pad = 0 }
+    Write-AnsiLine ($p.BorderBright + $b.V + $headline + (' ' * $pad) + $p.BorderBright + $b.V)
+
+    # Line 2 — chips
+    $chips = @()
+
+    $buildChip = {
+        param($Color, $Glyph, $Count, $Label)
+        $Color + $Glyph + $p.Reset + ' ' + $p.Username + $Count + $p.Reset + ' ' + $p.TitleDim + $Label + $p.Reset
+    }
+
+    $chips += & $buildChip $p.Active  '●' $Active 'active'
+    $chips += & $buildChip $p.Disc    '○' $Disc   'disconnected'
+
+    if ($Other -gt 0) { $chips += & $buildChip $p.IdleDim '·' $Other 'other' }
+    if ($Disabled -gt 0) { $chips += & $buildChip $p.Error '⚠' $Disabled 'disabled' }
+    $chips += & $buildChip $p.Info    '◆' $Unique 'users'
+    if ($Offline -gt 0) { $chips += & $buildChip $p.IdleDim '·' $Offline 'offline' }
+    if ($Errored.Count -gt 0) {
+        $chips += & $buildChip $p.Error '✗' $Errored.Count 'errored'
+    }
+
+    $chipLine = ' ' + ($chips -join '   ')
+    $pad = $inner - (Get-VisibleLength $chipLine)
+    if ($pad -lt 0) { $pad = 0 }
+    Write-AnsiLine ($p.BorderBright + $b.V + $chipLine + (' ' * $pad) + $p.BorderBright + $b.V)
+
+    Write-AnsiLine ($p.BorderBright + $b.BL + ($b.H * $inner) + $b.BR)
+
+    # Error detail below the panel, grouped by message so one RPC outage
+    # renders as one line instead of N identical repetitions.
+    if ($Errored.Count -gt 0) {
+        Write-Blank
+        $grouped = $Errored | Group-Object Error | Sort-Object Count -Descending
+        foreach ($group in $grouped) {
+            $hostList = ($group.Group | Select-Object -ExpandProperty Server | Sort-Object) -join ', '
+            $line1 = '  ' + $p.Error + '✗ ' + $p.Reset + $p.TitleFg + $group.Name + $p.Reset
+            $line2 = '    ' + $p.TitleDim + "[$($group.Count)] $hostList" + $p.Reset
+            Write-AnsiLine $line1
+            Write-AnsiLine $line2
+        }
+    }
+
+    Write-Blank
+}
+
+function Write-EmptyState {
+    Write-Blank
+    Write-AnsiLine ('  ' + $script:Palette.TitleDim + '(no matching sessions)' + $script:Palette.Reset)
+    Write-Blank
+}
+
+# ============================================================================
+# Async logoff view
+# ============================================================================
+
+$script:LogoffWorker = {
+    param($target, $queue)
+
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $hServer = [IntPtr]::Zero
+    $isLoggedOff = $false
+    $errMsg = $null
+
+    try {
+        $hServer = [LISSTech.Wts.Native]::WTSOpenServerW($target.Server)
+        $isLoggedOff = [LISSTech.Wts.Native]::WTSLogoffSession($hServer, $target.SessionId, $true)
+        if (-not $isLoggedOff) {
+            $code   = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            $errMsg = '{0} ({1})' -f (New-Object System.ComponentModel.Win32Exception($code)).Message, $code
+        }
+    } catch {
+        $errMsg = $_.Exception.Message
+    } finally {
+        if ($hServer -ne [IntPtr]::Zero) {
+            [LISSTech.Wts.Native]::WTSCloseServer($hServer)
+        }
+    }
+
+    $sw.Stop()
+    $queue.Enqueue([pscustomobject]@{
+        Key       = $target.Key
+        LoggedOff = $isLoggedOff
+        Error     = $errMsg
+        Elapsed   = $sw.Elapsed
+    })
+}
+
+function Format-LogoffRow {
+    param($Target, [int]$InnerWidth)
+
+    $p = $script:Palette
+    $b = $script:Box
+
+    # Choose elapsed source: ticking clock for running, frozen for done/fail
+    $elapsed = switch ($Target.Status) {
+        'running' { [DateTime]::UtcNow - $Target.Started }
+        default   { $Target.Elapsed }
+    }
+
+    $userCol = Format-Fixed -Text $Target.Username -Width 18
+    $srvCol  = Format-Fixed -Text $Target.Server   -Width 22
+    $idCol   = Format-Fixed -Text "id $($Target.SessionId)" -Width 8
+    $timeCol = Format-Duration -Span $elapsed
+
+    # Status column (progress bar, full bar, or error text)
+    $statusCol, $mark, $timeColor = switch ($Target.Status) {
+        'running' {
+            $bar = Format-CylonBar -ElapsedSec $elapsed.TotalSeconds
+            @(
+                ($p.Scanner + '[' + $p.Reset + $bar + $p.Scanner + ']' + $p.Reset)
+                '  '
+                $p.TitleDim
+            )
+            break
+        }
+        'ok' {
+            $bar = $p.Success + ('█' * $script:BarWidth) + $p.Reset
+            @(
+                ($p.Success + '[' + $p.Reset + $bar + $p.Success + ']' + $p.Reset)
+                ($p.Success + '✓ ' + $p.Reset)
+                $p.Success
+            )
+            break
+        }
+        'fail' {
+            $raw = $Target.Error
+            $maxErrWidth = $script:BarWidth + 2
+            $errText = switch ($raw.Length -gt $maxErrWidth) {
+                $true  { $raw.Substring(0, $maxErrWidth - 1) + '.' }
+                $false { $raw.PadRight($maxErrWidth) }
+            }
+            @(
+                ($p.Error + $errText + $p.Reset)
+                ($p.Error + '✗ ' + $p.Reset)
+                $p.Error
+            )
+        }
+    }
+
+    $body = (
+        ' ' +
+        $p.Username    + $userCol + $p.Reset + '  ' +
+        $p.WinStation  + $srvCol  + $p.Reset + '  ' +
+        $p.SessionId   + $idCol   + $p.Reset + '  ' +
+        $statusCol + '  ' +
+        $timeColor + $timeCol + $p.Reset + ' ' +
+        $mark
+    )
+
+    $padding = $InnerWidth - (Get-VisibleLength $body)
+    if ($padding -lt 0) { $padding = 0 }
+
+    $p.BorderBright + $b.V + $body + (' ' * $padding) + $p.BorderBright + $b.V
+}
+
+function Start-AsyncLogoff {
+    <#
+    .SYNOPSIS
+        Dispatches WTSLogoffSession calls in parallel and renders live,
+        per-row progress docker-pull style.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [object[]]$Sessions,
+
+        [ValidateRange(1, 128)]
+        [int]$ThrottleLimit = 16
+    )
+
+    begin {
+        Write-Debug "Start-AsyncLogoff → sessions=$($Sessions.Count) throttle=$ThrottleLimit"
+    }
+
+    end {
+        if ($Sessions.Count -eq 0) { return }
+
+        $p = $script:Palette
+        $b = $script:Box
+        $inner = $script:PanelWidth - 2
+
+        # --- Panel header ----------------------------------------------------
+        $titleText = " LOGOFF · $($Sessions.Count) session(s) "
+        $dashCount = $inner - $titleText.Length - 1
+        if ($dashCount -lt 3) { $dashCount = 3 }
+
+        Write-Blank
+        Write-AnsiLine (
+            $p.BorderBright + $b.TL + $b.H +
+            $p.Bold + $p.Warning + $titleText + $p.Reset +
+            $p.BorderBright + ($b.H * $dashCount) + $b.TR
+        )
+
+        # --- Build per-target state ------------------------------------------
+        $targets = @()
+        $index = 0
+        foreach ($session in $Sessions) {
+            $targets += [pscustomobject]@{
+                Key       = $index
+                Server    = $session.Server
+                SessionId = $session.SessionId
+                Username  = $session.Username
+                State     = $session.State
+                Status    = 'running'
+                Started   = [DateTime]::UtcNow
+                Elapsed   = [TimeSpan]::Zero
+                LoggedOff = $false
+                Error     = $null
+            }
+            $index++
+        }
+
+        # Reserve one line per target + draw the bottom border up front.
+        # The repaint loop will scroll back over (rowCount + 1) lines so the
+        # bottom border stays visible while rows update in place.
+        foreach ($target in $targets) {
+            Write-AnsiLine (Format-LogoffRow -Target $target -InnerWidth $inner)
+        }
+        Write-AnsiLine ($p.BorderBright + $b.BL + ($b.H * $inner) + $b.BR)
+
+        # --- Dispatch --------------------------------------------------------
+        $queue = New-Object System.Collections.Concurrent.ConcurrentQueue[object]
+        $pool  = [runspacefactory]::CreateRunspacePool(1, [math]::Min($ThrottleLimit, $targets.Count))
+        $pool.Open()
+
+        $jobs = foreach ($target in $targets) {
+            $ps = [powershell]::Create()
+            $ps.RunspacePool = $pool
+            [void]$ps.AddScript($script:LogoffWorker)
+            [void]$ps.AddArgument($target)
+            [void]$ps.AddArgument($queue)
+            $target.Started = [DateTime]::UtcNow
+
+            [pscustomobject]@{
+                Pipe   = $ps
+                Handle = $ps.BeginInvoke()
+            }
+        }
+
+        $rowCount   = $targets.Count
+        $scrollUp   = $rowCount + 1   # include the bottom border in the scroll window
+        $bottomLine = $p.BorderBright + $b.BL + ($b.H * $inner) + $b.BR + $p.Reset
+
+        try {
+            # Repaint loop
+            while (@($jobs | Where-Object { -not $_.Handle.IsCompleted }).Count -gt 0) {
+                $evt = $null
+                while ($queue.TryDequeue([ref]$evt)) {
+                    $t = $targets[$evt.Key]
+                    $t.Status    = if ($evt.LoggedOff) { 'ok' } else { 'fail' }
+                    $t.LoggedOff = $evt.LoggedOff
+                    $t.Error     = $evt.Error
+                    $t.Elapsed   = $evt.Elapsed
+                }
+
+                $buffer = "$script:CSI$scrollUp`F"
+                foreach ($t in $targets) {
+                    $buffer += "$script:CSI" + '2K'
+                    $buffer += (Format-LogoffRow -Target $t -InnerWidth $inner) + $p.Reset + "`n"
+                }
+                # Re-emit the bottom border so it stays in place between ticks.
+                $buffer += "$script:CSI" + '2K' + $bottomLine + "`n"
+                [Console]::Out.Write($buffer)
+
+                Start-Sleep -Milliseconds 55
+            }
+
+            # Final drain
+            $evt = $null
+            while ($queue.TryDequeue([ref]$evt)) {
+                $t = $targets[$evt.Key]
+                $t.Status    = if ($evt.LoggedOff) { 'ok' } else { 'fail' }
+                $t.LoggedOff = $evt.LoggedOff
+                $t.Error     = $evt.Error
+                $t.Elapsed   = $evt.Elapsed
+            }
+
+            $buffer = "$script:CSI$scrollUp`F"
+            foreach ($t in $targets) {
+                $buffer += "$script:CSI" + '2K'
+                $buffer += (Format-LogoffRow -Target $t -InnerWidth $inner) + $p.Reset + "`n"
+            }
+            $buffer += "$script:CSI" + '2K' + $bottomLine + "`n"
+            [Console]::Out.Write($buffer)
+        } finally {
+            foreach ($job in $jobs) {
+                try { [void]$job.Pipe.EndInvoke($job.Handle) } catch {}
+                $job.Pipe.Dispose()
+            }
+            $pool.Close()
+            $pool.Dispose()
+        }
+
+        # --- Tally -----------------------------------------------------------
+        $okTargets   = @($targets.Where({ $_.Status -eq 'ok' }))
+        $failTargets = @($targets.Where({ $_.Status -eq 'fail' }))
+        $okCount     = $okTargets.Count
+        $failCount   = $failTargets.Count
+        $skipCount   = 0  # AsyncLogoff doesn't skip; the caller filters out
+                          # IsCurrent sessions before dispatching.
+
+        Write-Blank
+        Write-AnsiLine (
+            '  ' +
+            $p.Success + '✓ ' + $p.Username + $okCount   + $p.Reset + ' ' + $p.TitleDim + 'logged off' + $p.Reset +
+            '   ' +
+            $p.Error   + '✗ ' + $p.Username + $failCount + $p.Reset + ' ' + $p.TitleDim + 'failed'     + $p.Reset
+        )
+
+        if ($failCount -gt 0) {
+            Write-Blank
+            foreach ($failed in $failTargets) {
+                $descr = '{0} on {1} (id {2})' -f $failed.Username, $failed.Server, $failed.SessionId
+                Write-AnsiLine (
+                    '  ' + $p.Error + '✗ ' + $p.Reset +
+                    $p.Username + $descr + $p.Reset +
+                    $p.TitleDim + ': ' + $failed.Error + $p.Reset
+                )
+            }
+        }
+
+        Write-Blank
+
+        Write-Debug "Start-AsyncLogoff → ok=$okCount fail=$failCount"
+
+        # Emit the result so callers (Show-UserSession with -Report) can
+        # feed the logoff summary into the report generator.
+        [pscustomobject]@{
+            Succeeded = $okCount
+            Failed    = $failCount
+            Skipped   = $skipCount
+            Failures  = @($failTargets | ForEach-Object {
+                [pscustomobject]@{
+                    Server    = $_.Server
+                    Username  = $_.Username
+                    SessionId = $_.SessionId
+                    Error     = $_.Error
+                }
+            })
+        }
+    }
+}
