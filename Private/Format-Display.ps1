@@ -89,6 +89,170 @@ $script:Col = @{
     LogonShort  = 13   # truncated when ⚠ DISABLED badge appends
 }
 
+# FleetGrid column widths keyed by terminal-width breakpoint. Each entry is a
+# hashtable mapping column name → width; absent columns are omitted from the
+# render at that breakpoint. Cells are separated by a single space, and the
+# sum of widths + (N - 1) separators must equal the breakpoint width.
+#
+# Degradation principle: drop lowest-triage-value columns first.
+#   80  drops LOGON, ACCOUNT; folds SESSION into NOTE
+#   100 adds SESSION and LOGON back; ACCOUNT still folded into NOTE
+#   120 is canonical
+#   160 widens USER/SERVER/NOTE
+#   200 adds DOMAIN and LASTINPUT
+$script:FleetCol = @{
+    80  = [ordered]@{ PRI = 3; SERVER = 14; USER = 16; ST = 4; IDLE =  7;                                 NOTE = 30 }
+    100 = [ordered]@{ PRI = 3; SERVER = 16; USER = 17; ST = 4; SESSION = 12; IDLE =  7; LOGON = 12;       NOTE = 21 }
+    120 = [ordered]@{ PRI = 3; SERVER = 18; USER = 18; ST = 4; SESSION = 12; IDLE =  7; LOGON = 14; ACCOUNT = 10; NOTE = 18 }
+    160 = [ordered]@{ PRI = 3; SERVER = 22; USER = 22; ST = 4; SESSION = 16; IDLE =  7; LOGON = 16; ACCOUNT = 10; NOTE = 52 }
+    200 = [ordered]@{ PRI = 3; SERVER = 24; USER = 24; DOMAIN = 12; ST = 4; SESSION = 18; IDLE =  7; LASTINPUT = 16; LOGON = 16; ACCOUNT = 10; NOTE = 46 }
+}
+
+$script:FleetStaleThreshold = [TimeSpan]::FromDays(7)
+
+function Get-FleetRowPriority {
+    <#
+    .SYNOPSIS
+        Maps a fleet row (session or synthetic host row) to a priority bucket.
+    .DESCRIPTION
+        Returns a hashtable:
+            Bucket = 'ERR' | 'OFF' | '!!' | '!' | '*' | ''
+            Rank   = integer sort key (lower = higher priority)
+        Buckets ordered high-to-low: ERR > OFF > !! disabled > ! stale >
+        * current > blank. Host-level (ERR/OFF) ranks above session-level
+        so fleet-wide host outages surface at the top of the table.
+    #>
+    param(
+        [string]$RowKind,                          # 'session' | 'error' | 'offline'
+        [object]$Session                           # session object when RowKind = 'session'
+    )
+
+    switch ($RowKind) {
+        'error'   { return @{ Bucket = 'ERR'; Rank = 0 } }
+        'offline' { return @{ Bucket = 'OFF'; Rank = 1 } }
+    }
+
+    if ($Session.IsUserDisabled) {
+        return @{ Bucket = '!!'; Rank = 2 }
+    }
+
+    $isDisc = $Session.State -eq [LISSTech.Wts.WtsConnectState]::Disconnected
+    if ($isDisc -and $Session.IdleTime -ge $script:FleetStaleThreshold) {
+        return @{ Bucket = '!'; Rank = 3 }
+    }
+
+    if ($Session.IsCurrent) {
+        return @{ Bucket = '*'; Rank = 4 }
+    }
+
+    @{ Bucket = ''; Rank = 5 }
+}
+
+function Get-FleetOrderedRows {
+    <#
+    .SYNOPSIS
+        Assembles the fleet row list from a scan result and returns it
+        sorted for FleetGrid rendering.
+    .DESCRIPTION
+        Produces PSCustomObjects with shape:
+            Bucket    priority bucket glyph
+            Rank      integer sort key
+            RowKind   'session' | 'error' | 'offline'
+            Server    host name
+            Session   the session object, or $null for host rows
+            HostNote  text for the NOTE column on host rows
+
+        Sorted by (Rank asc, within-bucket tiebreakers per the design brief):
+          !! disabled:  State=Active before Disc, IdleTime desc, Server, User
+          !  stale:     IdleTime desc, Server, User
+          *  current:   State=Active before other, IdleTime desc, Server, User
+          blank:        State=Active before other, IdleTime desc, Server, User
+          ERR / OFF:    Server asc
+    #>
+    param(
+        [object[]]$Sessions = @(),
+        [object[]]$Offline  = @(),
+        [object[]]$Errored  = @()
+    )
+
+    $rows = [System.Collections.Generic.List[object]]::new()
+
+    foreach ($s in $Sessions) {
+        $p = Get-FleetRowPriority -RowKind 'session' -Session $s
+        $rows.Add([pscustomobject]@{
+            Bucket   = $p.Bucket
+            Rank     = $p.Rank
+            RowKind  = 'session'
+            Server   = $s.Server
+            Session  = $s
+            HostNote = $null
+        })
+    }
+
+    foreach ($srv in $Offline) {
+        $name = if ($null -ne $srv -and $srv.PSObject.Properties['Name']) { $srv.Name } else { [string]$srv }
+        $p = Get-FleetRowPriority -RowKind 'offline'
+        $rows.Add([pscustomobject]@{
+            Bucket   = $p.Bucket
+            Rank     = $p.Rank
+            RowKind  = 'offline'
+            Server   = $name
+            Session  = $null
+            HostNote = 'offline'
+        })
+    }
+
+    foreach ($e in $Errored) {
+        $name = if ($null -ne $e.Server) { $e.Server } elseif ($e.PSObject.Properties['Name']) { $e.Name } else { [string]$e }
+        $p = Get-FleetRowPriority -RowKind 'error'
+        $rows.Add([pscustomobject]@{
+            Bucket   = $p.Bucket
+            Rank     = $p.Rank
+            RowKind  = 'error'
+            Server   = $name
+            Session  = $null
+            HostNote = $e.Error
+        })
+    }
+
+    # Active-state preference within session buckets (Active sorts ahead of
+    # Disconnected/other via ascending numeric key). Host rows short-circuit
+    # to 0 so their Rank alone places them — the other keys are tiebreakers.
+    # IdleTime for session rows; host rows contribute TimeSpan.Zero.
+    $sortProps = @(
+        @{ Expression = 'Rank' }
+        @{ Expression = {
+            if ($_.RowKind -ne 'session') { 0 }
+            elseif ($_.Session.State -eq [LISSTech.Wts.WtsConnectState]::Active) { 0 }
+            else { 1 }
+        } }
+        @{ Expression = {
+            if ($_.RowKind -ne 'session') { [TimeSpan]::Zero }
+            else { $_.Session.IdleTime }
+        }; Descending = $true }
+        @{ Expression = 'Server' }
+        @{ Expression = { if ($_.Session) { $_.Session.Username } else { '' } } }
+    )
+    $rows | Sort-Object -Property $sortProps
+}
+
+function Get-FleetColWidths {
+    <#
+    .SYNOPSIS
+        Returns the appropriate FleetGrid column-width map for the current
+        terminal width, picking the largest breakpoint whose total fits.
+    #>
+    param(
+        [int]$TerminalWidth = [Math]::Max(80, [Console]::WindowWidth)
+    )
+
+    $breakpoints = $script:FleetCol.Keys | Sort-Object -Descending
+    foreach ($bp in $breakpoints) {
+        if ($TerminalWidth -ge $bp) { return $script:FleetCol[$bp] }
+    }
+    return $script:FleetCol[80]
+}
+
 # Box-drawing glyphs (all in Consolas — no rounded variants)
 $script:Box = @{
     H     = '─'; V    = '│'
@@ -102,6 +266,7 @@ $script:Palette = @{
     BorderDim    = "${script:CSI}38;5;238m"
     BorderBright = "${script:CSI}38;5;67m"
     TitleFg      = "${script:CSI}38;5;117m"
+    Server       = "${script:CSI}38;5;111m"      # host names in FleetGrid — periwinkle, kin to TitleFg
     TitleDim     = "${script:CSI}38;5;244m"
     Header       = "${script:CSI}38;5;231m"      # bright white for column headers
     Username     = "${script:CSI}38;5;252m"
