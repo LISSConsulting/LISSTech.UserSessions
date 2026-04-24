@@ -351,6 +351,108 @@ function Write-FleetSummaryStrip {
     Write-AnsiLine (' ' + ($parts -join $pipe))
 }
 
+function Get-FleetGroupedWidths {
+    <# Drops the SERVER column (host name provided by band header) and
+       gives the reclaimed width to NOTE so the table still spans the
+       full breakpoint width. #>
+    param([Parameter(Mandatory)]$Widths)
+
+    if (-not $Widths.Contains('SERVER')) { return $Widths }
+    $reclaim = $Widths['SERVER']
+    $result = [ordered]@{}
+    foreach ($key in $Widths.Keys) {
+        if ($key -eq 'SERVER') { continue }
+        $result[$key] = $Widths[$key]
+    }
+    if ($result.Contains('NOTE')) {
+        # NOTE absorbs the SERVER width + the separator that would have sat
+        # between SERVER and its neighbor (1 extra space in the join).
+        $result['NOTE'] = $result['NOTE'] + $reclaim + 1
+    }
+    $result
+}
+
+function Write-FleetHostBand {
+    <# One-line host header for grouped mode. Example:
+         RDS-01  5 sessions  3 active  2 disc  [!! 1]  [! 1]
+       Leading single space matches the row indent. #>
+    param(
+        [string]$Server,
+        [object[]]$Rows
+    )
+
+    $p = $script:Palette
+    $active = @($Rows | Where-Object { $_.RowKind -eq 'session' -and $_.Session.State -eq [LISSTech.Wts.WtsConnectState]::Active }).Count
+    $disc   = @($Rows | Where-Object { $_.RowKind -eq 'session' -and $_.Session.State -ne [LISSTech.Wts.WtsConnectState]::Active }).Count
+    $total  = $active + $disc
+    $disabled = @($Rows | Where-Object { $_.Bucket -eq '!!' }).Count
+    $stale    = @($Rows | Where-Object { $_.Bucket -eq '!'  }).Count
+    $you      = @($Rows | Where-Object { $_.Bucket -eq '*'  }).Count
+
+    $sessLabel = if ($total -eq 1) { '1 session' } else { "$total sessions" }
+
+    $pipe = $p.TitleDim + '  ·  ' + $p.Reset
+    $parts = @()
+    $parts += $p.Bold + $p.Server + $Server + $p.Reset
+    $parts += $p.Username + $sessLabel + $p.Reset
+    $parts += $p.Active  + ('{0} active' -f $active) + $p.Reset
+    $parts += $p.Disc    + ('{0} disc'   -f $disc)   + $p.Reset
+    if ($disabled -gt 0) { $parts += $p.Error   + ('!! {0} disabled' -f $disabled) + $p.Reset }
+    if ($stale    -gt 0) { $parts += $p.Warning + ('! {0} stale'     -f $stale)    + $p.Reset }
+    if ($you      -gt 0) { $parts += $p.Current + 'YOU'                            + $p.Reset }
+
+    Write-AnsiLine ('')
+    Write-AnsiLine (' ' + ($parts -join $pipe))
+}
+
+function Write-FleetHostTail {
+    <# Tail section for grouped mode showing OFFLINE / ERRORED hosts grouped
+       by error message, and the count of zero-session hosts that were
+       suppressed from the body. #>
+    param(
+        [object[]]$Offline = @(),
+        [object[]]$Errored = @(),
+        [int]$EmptyCount   = 0,
+        [string[]]$EmptyHosts = @()
+    )
+
+    $p = $script:Palette
+    $hadAny = $false
+
+    if ($EmptyCount -gt 0) {
+        Write-AnsiLine ('')
+        $list = if ($EmptyHosts.Count -le 8) {
+            ($EmptyHosts -join ', ')
+        } else {
+            (($EmptyHosts | Select-Object -First 8) -join ', ') + (', +{0} more' -f ($EmptyHosts.Count - 8))
+        }
+        Write-AnsiLine (' ' + $p.TitleDim + ('Empty hosts ({0}): ' -f $EmptyCount) + $list + $p.Reset)
+        $hadAny = $true
+    }
+
+    if ($Offline.Count -gt 0) {
+        Write-AnsiLine ('')
+        $names = foreach ($o in $Offline) {
+            if ($null -ne $o -and $o.PSObject.Properties['Name']) { $o.Name } else { [string]$o }
+        }
+        $hostWord = if ($Offline.Count -eq 1) { 'host' } else { 'hosts' }
+        Write-AnsiLine (' ' + $p.TitleDim + 'OFFLINE  ' + $p.Reset + $p.Username + ('{0} {1}: ' -f $Offline.Count, $hostWord) + $p.Reset + ($names -join ', '))
+        $hadAny = $true
+    }
+
+    if ($Errored.Count -gt 0) {
+        Write-AnsiLine ('')
+        $grouped = $Errored | Group-Object Error | Sort-Object Count -Descending
+        foreach ($g in $grouped) {
+            $hosts = ($g.Group | Select-Object -ExpandProperty Server | Sort-Object) -join ', '
+            Write-AnsiLine (' ' + $p.Error + 'ERROR    ' + $p.Reset + $p.TitleFg + $g.Name + $p.Reset + $p.TitleDim + ('  [{0}] ' -f $g.Count) + $hosts + $p.Reset)
+        }
+        $hadAny = $true
+    }
+
+    $hadAny
+}
+
 function Write-FleetGrid {
     <#
     .SYNOPSIS
@@ -370,24 +472,78 @@ function Write-FleetGrid {
         [object[]]$Sessions = @(),
         [object[]]$Offline  = @(),
         [object[]]$Errored  = @(),
-        [int]$TerminalWidth = [Math]::Max(80, [Console]::WindowWidth)
+        [int]$TerminalWidth = [Math]::Max(80, [Console]::WindowWidth),
+        [switch]$GroupByHost,
+        [string[]]$AllScannedHosts = @()
     )
 
     $widths = Get-FleetColWidths -TerminalWidth $TerminalWidth
     $rows = Get-FleetOrderedRows -Sessions $Sessions -Offline $Offline -Errored $Errored
 
-    Write-AnsiLine (Format-FleetHeaderRow -Widths $widths)
-    Write-AnsiLine (Format-FleetDividerRow -Widths $widths)
+    if (-not $GroupByHost) {
+        Write-AnsiLine (Format-FleetHeaderRow -Widths $widths)
+        Write-AnsiLine (Format-FleetDividerRow -Widths $widths)
 
-    if ($rows.Count -eq 0) {
-        $p = $script:Palette
-        Write-AnsiLine ('  ' + $p.TitleDim + '(no matching sessions)' + $p.Reset)
+        if ($rows.Count -eq 0) {
+            $p = $script:Palette
+            Write-AnsiLine ('  ' + $p.TitleDim + '(no matching sessions)' + $p.Reset)
+            return
+        }
+
+        foreach ($row in $rows) {
+            Write-AnsiLine (Format-FleetRow -Row $row -Widths $widths)
+        }
         return
     }
 
-    foreach ($row in $rows) {
-        Write-AnsiLine (Format-FleetRow -Row $row -Widths $widths)
+    # -GroupByHost: separate tail for OFF/ERR, host bands for sessions.
+    $groupedWidths = Get-FleetGroupedWidths -Widths $widths
+    $sessionRows = @($rows | Where-Object { $_.RowKind -eq 'session' })
+
+    # Compute empty hosts: in scope but had no sessions and no explicit
+    # offline/error listing. AllScannedHosts is optional — when supplied
+    # we can show an empty-hosts footnote.
+    $sessionHosts = @($sessionRows | Select-Object -ExpandProperty Server -Unique)
+    $offlineNames = foreach ($o in $Offline) {
+        if ($o.PSObject.Properties['Name']) { $o.Name } else { [string]$o }
     }
+    $errorNames = @($Errored | Select-Object -ExpandProperty Server)
+    $knownHosts = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($h in $sessionHosts) { [void]$knownHosts.Add($h) }
+    foreach ($h in $offlineNames) { [void]$knownHosts.Add($h) }
+    foreach ($h in $errorNames)   { [void]$knownHosts.Add($h) }
+    $emptyHosts = @($AllScannedHosts | Where-Object { -not $knownHosts.Contains($_) })
+
+    if ($sessionRows.Count -eq 0) {
+        $p = $script:Palette
+        Write-AnsiLine ('  ' + $p.TitleDim + '(no matching sessions)' + $p.Reset)
+    } else {
+        # Host order: by highest-severity bucket in the host, then host asc.
+        $hostPriority = @{}
+        foreach ($row in $sessionRows) {
+            $cur = $hostPriority[$row.Server]
+            if ($null -eq $cur -or $row.Rank -lt $cur) {
+                $hostPriority[$row.Server] = $row.Rank
+            }
+        }
+
+        $hostOrder = $hostPriority.Keys | Sort-Object @{ Expression = { $hostPriority[$_] } }, @{ Expression = { $_ } }
+
+        # Header rendered once above the first band — repeating it per band
+        # is k9s-style noise when most hosts have 1–3 rows.
+        Write-AnsiLine (Format-FleetHeaderRow -Widths $groupedWidths)
+        Write-AnsiLine (Format-FleetDividerRow -Widths $groupedWidths)
+
+        foreach ($server in $hostOrder) {
+            $hostRows = @($sessionRows | Where-Object { $_.Server -eq $server })
+            Write-FleetHostBand -Server $server -Rows $hostRows
+            foreach ($row in $hostRows) {
+                Write-AnsiLine (Format-FleetRow -Row $row -Widths $groupedWidths)
+            }
+        }
+    }
+
+    [void](Write-FleetHostTail -Offline $Offline -Errored $Errored -EmptyCount $emptyHosts.Count -EmptyHosts $emptyHosts)
 }
 
 function Get-FleetRowPriority {
