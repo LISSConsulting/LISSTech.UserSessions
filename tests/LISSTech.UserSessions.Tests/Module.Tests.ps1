@@ -9,7 +9,11 @@
 #>
 
 BeforeAll {
-    $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
+    $ProjectRoot = $PSScriptRoot
+    while ($ProjectRoot -and -not (Test-Path (Join-Path $ProjectRoot 'LISSTech.UserSessions.psd1'))) {
+        $ProjectRoot = Split-Path -Parent $ProjectRoot
+    }
+    if (-not $ProjectRoot) { throw 'Unable to locate LISSTech.UserSessions.psd1 from test directory' }
     $ManifestPath = Join-Path $ProjectRoot 'LISSTech.UserSessions.psd1'
     Import-Module $ManifestPath -Force
 }
