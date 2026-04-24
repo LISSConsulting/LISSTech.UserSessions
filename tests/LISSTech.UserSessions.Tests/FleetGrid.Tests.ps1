@@ -205,6 +205,53 @@ Describe 'Get-FleetColWidths' {
     }
 }
 
+Describe 'Get-FleetStretchedWidths' {
+
+    It 'Returns the input untouched when the table already fills the terminal' {
+        $w = [ordered]@{ PRI = 3; SERVER = 10; NOTE = 20 }
+        # Row width = 3 + 10 + 20 + 2 separators + 1 lead = 36; target TerminalWidth-1 = 36 -> no extra
+        $result = & (Get-Module LISSTech.UserSessions) { param($w) Get-FleetStretchedWidths -Widths $w -TerminalWidth 37 } $w
+        $result.PRI    | Should -Be 3
+        $result.SERVER | Should -Be 10
+        $result.NOTE   | Should -Be 20
+    }
+
+    It 'Absorbs extra width into NOTE when present' {
+        $w = [ordered]@{ PRI = 3; SERVER = 10; NOTE = 20 }
+        # Base = 36 (see above). TerminalWidth 100 -> target 99 -> extra 63 into NOTE.
+        $result = & (Get-Module LISSTech.UserSessions) { param($w) Get-FleetStretchedWidths -Widths $w -TerminalWidth 100 } $w
+        $result.NOTE   | Should -Be (20 + 63)
+        $result.SERVER | Should -Be 10
+        $result.PRI    | Should -Be 3
+    }
+
+    It 'Falls back to the last column when NOTE is absent' {
+        $w = [ordered]@{ PRI = 3; SERVER = 10; IDLE = 5 }
+        # Base = 3+10+5+2+1 = 21; target TerminalWidth-1 = 49; extra 28 into the last column (IDLE).
+        $result = & (Get-Module LISSTech.UserSessions) { param($w) Get-FleetStretchedWidths -Widths $w -TerminalWidth 50 } $w
+        $result.IDLE   | Should -Be (5 + 28)
+        $result.SERVER | Should -Be 10
+    }
+
+    It 'Preserves key ordering' {
+        $w = [ordered]@{ PRI = 3; SERVER = 10; NOTE = 20 }
+        $result = & (Get-Module LISSTech.UserSessions) { param($w) Get-FleetStretchedWidths -Widths $w -TerminalWidth 200 } $w
+        @($result.Keys) | Should -Be @('PRI', 'SERVER', 'NOTE')
+    }
+
+    It 'Produces a row that fits within TerminalWidth-1 after stretching' {
+        $baseline = & (Get-Module LISSTech.UserSessions) { Get-FleetColWidths -TerminalWidth 120 }
+        $stretched = & (Get-Module LISSTech.UserSessions) {
+            param($w) Get-FleetStretchedWidths -Widths $w -TerminalWidth 220
+        } $baseline
+
+        $sum = 0
+        foreach ($k in $stretched.Keys) { $sum += [int]$stretched[$k] }
+        $rowWidth = $sum + ($stretched.Keys.Count - 1) + 1  # separators + lead
+        $rowWidth | Should -Be 219  # TerminalWidth-1
+    }
+}
+
 Describe 'Format-FleetIdle' {
 
     It 'Returns dash for idle <= 1m' {

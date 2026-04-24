@@ -12,19 +12,19 @@
 # -----------------------------------------------------------------------------
 
 function New-HtmlBannerSection {
+    <#
+    .SYNOPSIS
+        Document title bar. Just "Session Report" + the scan timestamp —
+        no tool branding (that lives in the footer) and no tagline (the
+        meta-strip below carries operator / scope / duration).
+    #>
     param($Meta)
 
-    $version = ConvertTo-HtmlSafe $Meta.Version
+    $timestamp = ConvertTo-HtmlSafe $Meta.Timestamp
     @"
 <section class="banner">
-  <div>
-    <h1>LISSTech.UserSessions<span class="version">$version</span></h1>
-    <p class="tagline">Enumerate, audit, and log off Terminal Services sessions across AD.</p>
-  </div>
-  <div class="brand">
-    <div class="brand-mark">LISS</div>
-    <div class="brand-sub">Technologies</div>
-  </div>
+  <h1>Session Report</h1>
+  <div class="report-time mono">$timestamp</div>
 </section>
 "@
 }
@@ -104,11 +104,12 @@ function New-HtmlSummarySection {
     if ($Summary.Disabled -gt 0) {
         [void]$sb.AppendLine("  <div class=`"stat-card disabled`"><div class=`"stat-label`">⚠ Disabled</div><div class=`"stat-value mono`">$($Summary.Disabled)</div></div>")
     }
-    if ($Summary.Offline -gt 0) {
-        [void]$sb.AppendLine("  <div class=`"stat-card offline`"><div class=`"stat-label`">Offline</div><div class=`"stat-value mono`">$($Summary.Offline)</div></div>")
-    }
-    if ($Summary.Errored -gt 0) {
-        [void]$sb.AppendLine("  <div class=`"stat-card errored`"><div class=`"stat-label`">✗ Errored</div><div class=`"stat-value mono`">$($Summary.Errored)</div></div>")
+    # Offline + errored collapsed into one "Unreachable" tile — both mean
+    # "we couldn't get session data from this host". The breakdown by cause
+    # lives in the dedicated Offline hosts / Errored hosts sections.
+    $unreachable = $Summary.Offline + $Summary.Errored
+    if ($unreachable -gt 0) {
+        [void]$sb.AppendLine("  <div class=`"stat-card errored`"><div class=`"stat-label`">✗ Unreachable</div><div class=`"stat-value mono`">$unreachable</div></div>")
     }
     [void]$sb.AppendLine('</section>')
     $sb.ToString()

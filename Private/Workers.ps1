@@ -55,16 +55,19 @@ $script:ScanScript = {
             # Translate the common Win32 codes that WTS returns into something
             # a human can actually act on. Falls back to the system message
             # for unknown codes.
+            # Short labels designed to fit the NOTE column without truncation.
+            # Win32 code is appended for the technician to look up; the short
+            # form conveys the actionable category.
             $friendly = switch ($code) {
-                5    { 'Access denied (not allowed to query sessions remotely)' }
-                53   { 'Host unreachable (network path not found)' }
-                203  { 'WTS service not reachable (RPC endpoint unavailable)' }
-                1722 { 'WTS service not running on target host' }
-                1726 { 'RPC call failed (host rebooting or firewalled)' }
-                1727 { 'RPC endpoint mapper unreachable (firewall likely)' }
+                5    { 'Access denied (5)' }
+                53   { 'Host unreachable (53)' }
+                203  { 'RPC endpoint unavailable (203)' }
+                1722 { 'WTS service not running (1722)' }
+                1726 { 'RPC call failed (1726)' }
+                1727 { 'RPC endpoint mapper unreachable (1727)' }
                 default {
                     $sys = (New-Object System.ComponentModel.Win32Exception($code)).Message
-                    "$sys (Win32 code $code)"
+                    "$sys ($code)"
                 }
             }
             throw $friendly

@@ -135,12 +135,10 @@ Describe 'Find-UserSession parameters' {
 
 Describe 'Show-UserSession parameters' {
 
-    It 'accepts -Report markdown|html' {
+    It '-Report is a switch (HTML is the only format)' {
         $param = (Get-Command Show-UserSession).Parameters['Report']
         $param | Should -Not -BeNullOrEmpty
-        $validValues = $param.Attributes.Where({ $_ -is [ValidateSet] }).ValidValues
-        $validValues | Should -Contain 'markdown'
-        $validValues | Should -Contain 'html'
+        $param.SwitchParameter | Should -BeTrue
     }
 
     It 'has -ReportPath and -Clipboard' {

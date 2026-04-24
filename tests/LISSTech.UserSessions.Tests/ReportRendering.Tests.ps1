@@ -202,7 +202,9 @@ Describe 'HTML report composition' {
         }
 
         It 'Then the CSS custom properties are defined' {
-            $script:html | Should -Match '--bg:\s*#f5f1e8'
+            $script:html | Should -Match '--bg:\s*#[0-9a-fA-F]{3,6}'
+            $script:html | Should -Match '--card:\s*#[0-9a-fA-F]{3,6}'
+            $script:html | Should -Match '--ink:\s*#[0-9a-fA-F]{3,6}'
         }
 
         It 'Then the session username appears in the rendered HTML' {
@@ -282,71 +284,23 @@ Describe 'HTML report composition' {
 }
 
 # =============================================================================
-# Markdown renderer composition
-# =============================================================================
-
-Describe 'Markdown report composition' {
-
-    Context 'Given a minimal scan' {
-        BeforeAll {
-            $sessions = @((New-FakeSession -Username 'alice'))
-            $scan     = New-FakeScanResult -Scanned 1 -Sessions $sessions
-
-            $script:md = & (Get-Module LISSTech.UserSessions) {
-                param($scan, $sessions)
-                $ctx = New-ReportContext -ScanResult $scan -FilteredSessions $sessions -ScopeInfo @{}
-                Format-ReportMarkdown -Context $ctx
-            } $scan $sessions
-        }
-
-        It 'Then output begins with an H1 report heading' {
-            $script:md | Should -Match '^# Session Report'
-        }
-
-        It 'Then a Summary section is present' {
-            $script:md | Should -Match '## Summary'
-        }
-
-        It 'Then a per-server section is present' {
-            $script:md | Should -Match '## Sessions by server'
-        }
-    }
-}
-
-# =============================================================================
 # Clipboard + file path decisions — pure functions, unit-testable
 # =============================================================================
 
 Describe 'Resolve-ReportClipboardDecision' {
 
-    Context 'Given format=markdown and no -ReportPath' {
-        It 'Then the default decision is to copy' {
-            & (Get-Module LISSTech.UserSessions) {
-                Resolve-ReportClipboardDecision -Format 'markdown' -ClipboardExplicit $false -ClipboardOn $false -HasReportPath $false
-            } | Should -BeTrue
-        }
-    }
-
-    Context 'Given format=markdown with -ReportPath set' {
-        It 'Then the default decision is NOT to copy' {
-            & (Get-Module LISSTech.UserSessions) {
-                Resolve-ReportClipboardDecision -Format 'markdown' -ClipboardExplicit $false -ClipboardOn $false -HasReportPath $true
-            } | Should -BeFalse
-        }
-    }
-
-    Context 'Given format=html and no -ReportPath' {
+    Context 'Given no -ReportPath' {
         It 'Then the default decision is to copy (CF_HTML paste)' {
             & (Get-Module LISSTech.UserSessions) {
-                Resolve-ReportClipboardDecision -Format 'html' -ClipboardExplicit $false -ClipboardOn $false -HasReportPath $false
+                Resolve-ReportClipboardDecision -ClipboardExplicit $false -ClipboardOn $false -HasReportPath $false
             } | Should -BeTrue
         }
     }
 
-    Context 'Given format=html with -ReportPath (silent attachment mode)' {
+    Context 'Given -ReportPath set (silent attachment mode)' {
         It 'Then clipboard is not touched by default' {
             & (Get-Module LISSTech.UserSessions) {
-                Resolve-ReportClipboardDecision -Format 'html' -ClipboardExplicit $false -ClipboardOn $false -HasReportPath $true
+                Resolve-ReportClipboardDecision -ClipboardExplicit $false -ClipboardOn $false -HasReportPath $true
             } | Should -BeFalse
         }
     }
@@ -354,37 +308,35 @@ Describe 'Resolve-ReportClipboardDecision' {
     Context 'Given -Clipboard:$false explicitly passed' {
         It 'Then clipboard is suppressed regardless of defaults' {
             & (Get-Module LISSTech.UserSessions) {
-                Resolve-ReportClipboardDecision -Format 'html' -ClipboardExplicit $true -ClipboardOn $false -HasReportPath $false
+                Resolve-ReportClipboardDecision -ClipboardExplicit $true -ClipboardOn $false -HasReportPath $false
             } | Should -BeFalse
+        }
+    }
+
+    Context 'Given -Clipboard explicitly with -ReportPath' {
+        It 'Then clipboard is forced on alongside the file' {
+            & (Get-Module LISSTech.UserSessions) {
+                Resolve-ReportClipboardDecision -ClipboardExplicit $true -ClipboardOn $true -HasReportPath $true
+            } | Should -BeTrue
         }
     }
 }
 
 Describe 'Resolve-ReportFilePath' {
 
-    Context 'Given format=markdown without -ReportPath' {
-        It 'Then no file path is produced (clipboard-only)' {
-            & (Get-Module LISSTech.UserSessions) {
-                Resolve-ReportFilePath -Format 'markdown'
-            } | Should -BeNullOrEmpty
-        }
-    }
-
-    Context 'Given format=html without -ReportPath' {
-        It 'Then a temp file path is produced' {
-            $path = & (Get-Module LISSTech.UserSessions) {
-                Resolve-ReportFilePath -Format 'html'
-            }
+    Context 'Given no -ReportPath' {
+        It 'Then a temp file path is produced (so the browser preview has somewhere to open)' {
+            $path = & (Get-Module LISSTech.UserSessions) { Resolve-ReportFilePath }
             $path | Should -Match '\.html$'
             $path | Should -Match 'UserSession-Report'
         }
     }
 
     Context 'Given -ReportPath is provided' {
-        It 'Then that exact path is returned regardless of format' {
+        It 'Then that exact path is returned verbatim' {
             & (Get-Module LISSTech.UserSessions) {
-                Resolve-ReportFilePath -Format 'markdown' -ReportPath 'C:\tmp\my.md'
-            } | Should -Be 'C:\tmp\my.md'
+                Resolve-ReportFilePath -ReportPath 'C:\tmp\my.html'
+            } | Should -Be 'C:\tmp\my.html'
         }
     }
 }
@@ -417,6 +369,117 @@ Describe 'Get-LocalHostAliasSet' {
     }
 }
 
+Describe 'ConvertTo-CfHtml (CF_HTML header construction)' {
+
+    BeforeAll {
+        $script:Wrap = { param($h)
+            & (Get-Module LISSTech.UserSessions) { param($x) ConvertTo-CfHtml -Html $x } $h
+        }
+    }
+
+    It 'emits the Version:0.9 marker' {
+        $out = & $script:Wrap '<p>x</p>'
+        $out | Should -Match 'Version:0\.9'
+    }
+
+    It 'wraps the payload in StartFragment / EndFragment markers' {
+        $out = & $script:Wrap '<p>hello</p>'
+        $out | Should -Match '<!--StartFragment-->\s*<p>hello</p>\s*<!--EndFragment-->'
+    }
+
+    It 'StartFragment / EndFragment offsets bound the payload bytes exactly' {
+        $payload = '<p>fragment-body</p>'
+        $out = & $script:Wrap $payload
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($out)
+
+        # Parse offsets from the header.
+        if ($out -notmatch 'StartFragment:(\d{10})') { throw 'StartFragment header missing' }
+        $startFragment = [int]$Matches[1]
+        if ($out -notmatch 'EndFragment:(\d{10})')   { throw 'EndFragment header missing'   }
+        $endFragment = [int]$Matches[1]
+
+        # Bytes between the offsets must be the original payload, exactly.
+        $sliceLen = $endFragment - $startFragment
+        $slice    = [System.Text.Encoding]::UTF8.GetString($bytes, $startFragment, $sliceLen)
+        $slice | Should -Be $payload
+    }
+
+    It 'StartHTML offset points at the start of the HTML shell' {
+        $payload = '<p>x</p>'
+        $out = & $script:Wrap $payload
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($out)
+
+        if ($out -notmatch 'StartHTML:(\d{10})') { throw 'StartHTML header missing' }
+        $startHtml = [int]$Matches[1]
+        # Bytes from StartHTML forward should begin with "<html" — this is
+        # the CF_HTML shell, not the fragment itself.
+        $probeLen = [System.Text.Encoding]::UTF8.GetByteCount('<html')
+        $sliced = [System.Text.Encoding]::UTF8.GetString($bytes, $startHtml, $probeLen)
+        $sliced | Should -Be '<html'
+    }
+
+    It 'handles multibyte UTF-8 payloads (offsets are byte counts, not char counts)' {
+        $payload = '<p>café — naïve ☕</p>'
+        $out = & $script:Wrap $payload
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($out)
+
+        if ($out -notmatch 'StartFragment:(\d{10})') { throw 'StartFragment header missing' }
+        $startFragment = [int]$Matches[1]
+        if ($out -notmatch 'EndFragment:(\d{10})')   { throw 'EndFragment header missing'   }
+        $endFragment = [int]$Matches[1]
+
+        $slice = [System.Text.Encoding]::UTF8.GetString($bytes, $startFragment, $endFragment - $startFragment)
+        $slice | Should -Be $payload
+    }
+
+    It 'Lifts head <style> blocks into the fragment so pasted styles survive' {
+        # The fragment is the only thing rich-text editors (HaloPSA, Outlook,
+        # TinyMCE, Word) read. <style> in <head> would otherwise be dropped on
+        # paste, leaving the report unstyled.
+        $doc = @'
+<!DOCTYPE html>
+<html><head><style>.banner { background: red }</style></head>
+<body><p>payload</p></body></html>
+'@
+        $out = & $script:Wrap $doc
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($out)
+
+        if ($out -notmatch 'StartFragment:(\d{10})') { throw 'StartFragment header missing' }
+        $startFragment = [int]$Matches[1]
+        if ($out -notmatch 'EndFragment:(\d{10})')   { throw 'EndFragment header missing' }
+        $endFragment = [int]$Matches[1]
+
+        $slice = [System.Text.Encoding]::UTF8.GetString($bytes, $startFragment, $endFragment - $startFragment)
+        $slice | Should -Match '<style[^>]*>\s*\.banner \{ background: red \}\s*</style\s*>'
+        $slice | Should -Match '<p>payload</p>'
+    }
+
+    It 'Fragment does NOT contain the HTML shell tags (paste targets reject fragments that wrap DOCTYPE/html/head)' {
+        # Full document input — markers must go INSIDE <body>, not wrap the shell.
+        $doc = @'
+<!DOCTYPE html>
+<html lang="en">
+<head><title>t</title></head>
+<body><p>payload</p></body>
+</html>
+'@
+        $out = & $script:Wrap $doc
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($out)
+
+        if ($out -notmatch 'StartFragment:(\d{10})') { throw 'StartFragment header missing' }
+        $startFragment = [int]$Matches[1]
+        if ($out -notmatch 'EndFragment:(\d{10})')   { throw 'EndFragment header missing'   }
+        $endFragment = [int]$Matches[1]
+
+        $slice = [System.Text.Encoding]::UTF8.GetString($bytes, $startFragment, $endFragment - $startFragment)
+        $slice | Should -Not -Match '<!DOCTYPE'
+        $slice | Should -Not -Match '<html'
+        $slice | Should -Not -Match '<head'
+        $slice | Should -Not -Match '</body'
+        $slice | Should -Match '<p>payload</p>'
+    }
+}
+
 Describe 'Set-ClipboardHtml (PS7 MTA path)' {
 
     # -Skip: is evaluated at Pester discovery (before BeforeAll), so environment
@@ -440,44 +503,6 @@ Describe 'Set-ClipboardHtml (PS7 MTA path)' {
         { & (Get-Module LISSTech.UserSessions) {
             param($h) Set-ClipboardHtml -Html $h
         } '<b>test</b>' } | Should -Not -Throw
-    }
-}
-
-Describe 'Get-MarkdownSafe / markdown injection hardening' {
-
-    It 'escapes pipe characters in the value' {
-        & (Get-Module LISSTech.UserSessions) { Get-MarkdownSafe 'evil|host' } | Should -Be 'evil\|host'
-    }
-
-    It 'escapes backticks in the value' {
-        & (Get-Module LISSTech.UserSessions) { Get-MarkdownSafe 'with `code` inline' } | Should -Be 'with \`code\` inline'
-    }
-
-    It 'collapses newlines to spaces' {
-        $result = & (Get-Module LISSTech.UserSessions) { Get-MarkdownSafe "line1`nline2" }
-        $result | Should -Be 'line1 line2'
-    }
-
-    It 'returns empty string for $null' {
-        & (Get-Module LISSTech.UserSessions) { Get-MarkdownSafe $null } | Should -Be ''
-    }
-
-    It 'Server names with pipes do not break logoff-failures table' {
-        $logoff = [pscustomobject]@{
-            Succeeded = 0; Failed = 1; Skipped = 0
-            Failures = @([pscustomobject]@{
-                Server = 'evil|host'; Username = 'a|b'; SessionId = 1; Error = 'error|text'
-            })
-        }
-        $scan = New-FakeScanResult -Scanned 1 -Sessions @()
-        $md = & (Get-Module LISSTech.UserSessions) {
-            param($s, $l)
-            $ctx = New-ReportContext -ScanResult $s -FilteredSessions @() -LogoffResult $l -ScopeInfo @{}
-            Format-ReportMarkdown -Context $ctx
-        } $scan $logoff
-        $md | Should -Match 'evil\\\|host'
-        $md | Should -Match 'a\\\|b'
-        $md | Should -Match 'error\\\|text'
     }
 }
 

@@ -17,11 +17,12 @@
         live docker-pull style progress — each gets a Cylon scanner bar
         while in flight, then flips to a final ✓/✗ on completion.
 
-        With -Report, also generates a ticket-ready artifact (markdown
-        or HTML) that captures the scan snapshot, the logoff result (if
-        any), and the scope of what was scanned. By default, markdown
-        reports go to the clipboard; HTML reports open in your default
-        browser via a temp file. Use -ReportPath to save explicitly.
+        With -Report, also generates a ticket-ready HTML artifact that
+        captures the scan snapshot, the logoff result (if any), and the
+        scope of what was scanned. By default it lands on the clipboard
+        as CF_HTML (pastes rendered into HaloPSA / Outlook / Word) and
+        opens in your default browser via a temp file. Use -ReportPath
+        to save explicitly.
 
         Not intended for pipeline input. For scripting use
         Find-UserSession; for programmatic logoff use Stop-UserSession.
@@ -55,24 +56,22 @@
         renderer. Respects -WhatIf / -Confirm.
 
     .PARAMETER Report
-        Generate a ticket-ready report in the specified format:
-          markdown : clipboard-friendly plain-text tables (HaloPSA-ready)
-          html     : rendered HTML on the clipboard (pastes as formatted
-                     content into HaloPSA / Outlook / Word) plus a browser
-                     preview
+        Generate a ticket-ready HTML report. Default behavior: render to
+        a temp file, open it in the browser, and place CF_HTML on the
+        clipboard for rich-text paste into HaloPSA / Outlook / Word.
+        Implied when -ReportPath is given.
+
         Can be combined with -LogOff — the report then includes the
         pre-logoff session state and the logoff tally.
 
     .PARAMETER ReportPath
         Explicit file path for the report. When set, the file is written
-        silently: HTML does not auto-open the browser, and the clipboard
-        is not touched unless -Clipboard is also given.
+        silently: the browser is not auto-opened, and the clipboard is
+        not touched unless -Clipboard is also given.
 
     .PARAMETER Clipboard
-        Force clipboard behavior explicitly. Defaults:
-          -Report markdown → clipboard on unless -ReportPath is set
-          -Report html     → clipboard on (as CF_HTML / rendered) unless
-                             -ReportPath is set
+        Force clipboard behavior explicitly. Default with -Report (no
+        -ReportPath): clipboard is set to CF_HTML for rendered paste.
         Pass -Clipboard:$false to suppress the clipboard when it would
         otherwise fire.
 
@@ -87,16 +86,16 @@
 
     .EXAMPLE
         # Maintenance window canonical command: execute the logoff AND
-        # drop a ticket-ready markdown summary on the clipboard.
-        Show-UserSession -LogOff -Confirm:$false -Report markdown
+        # drop a rendered HTML report on the clipboard for the ticket.
+        Show-UserSession -LogOff -Confirm:$false -Report
 
     .EXAMPLE
         # Opens a neobrutal HTML report in your default browser.
-        Show-UserSession -Report html
+        Show-UserSession -Report
 
     .EXAMPLE
         # Save explicitly (no auto-open, no clipboard).
-        Show-UserSession -Report html -ReportPath C:\Tickets\HALO-1234.html
+        Show-UserSession -Report -ReportPath C:\Tickets\HALO-1234.html
     #>
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
     param(
@@ -125,8 +124,7 @@
         [switch]$GroupByHost,
         [switch]$LogOff,
 
-        [ValidateSet('markdown', 'html')]
-        [string]$Report,
+        [switch]$Report,
 
         [string]$ReportPath,
 
@@ -137,19 +135,11 @@
         Write-Debug 'Show-UserSession → begin'
         Write-Debug "  OnlyDisconnected=$OnlyDisconnected MinIdleDays=$MinIdleDays LogOff=$LogOff Report=$Report"
 
-        # If -ReportPath or -Clipboard is given without -Report, infer the
-        # format: extension-based for path, markdown default for clipboard.
-        if (-not $Report) {
-            if ($ReportPath) {
-                $Report = switch -Regex ($ReportPath) {
-                    '\.html?$' { 'html' }
-                    default    { 'markdown' }
-                }
-                Write-Debug "  -Report inferred as '$Report' from path extension"
-            } elseif ($Clipboard) {
-                $Report = 'markdown'
-                Write-Debug "  -Report defaulted to 'markdown' for -Clipboard"
-            }
+        # -ReportPath or -Clipboard implies -Report; the user wouldn't pass
+        # them otherwise.
+        if (-not $Report -and ($ReportPath -or $Clipboard)) {
+            $Report = $true
+            Write-Debug '  -Report inferred from -ReportPath / -Clipboard'
         }
     }
 
@@ -294,8 +284,6 @@
                 MinIdleDays        = $MinIdleDays
             }
 
-            # Build the presentation-layer context once. Both renderers
-            # consume the same shape — the view model is the seam.
             $contextArgs = @{
                 ScanResult       = $scan
                 FilteredSessions = $sessions
@@ -303,14 +291,9 @@
                 ScopeInfo        = $scopeInfo
             }
             $reportContext = New-ReportContext @contextArgs
-
-            $content = switch ($Report) {
-                'markdown' { Format-ReportMarkdown -Context $reportContext }
-                'html'     { Format-ReportHtml     -Context $reportContext }
-            }
+            $content = Format-ReportHtml -Context $reportContext
 
             $dispatchArgs = @{
-                Format  = $Report
                 Content = $content
             }
             if ($PSBoundParameters.ContainsKey('ReportPath')) { $dispatchArgs.ReportPath = $ReportPath }

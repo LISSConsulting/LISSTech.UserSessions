@@ -37,8 +37,8 @@ Show-UserSession
 Find-UserSession -Username jmariano | Where-Object IdleTime.TotalDays -gt 7
 
 # Maintenance-window canonical: scan, log everyone off, drop a ticket-ready
-# markdown summary on the clipboard in one command
-Show-UserSession -LogOff -Confirm:$false -Report markdown
+# rendered HTML report on the clipboard in one command
+Show-UserSession -LogOff -Confirm:$false -Report
 ```
 
 ---
@@ -54,7 +54,7 @@ graph LR
     D --> E["⚙️ WTSEnumerateSessions<br/>Win32 P/Invoke"]
     E --> F["📦 Session objects<br/>LISSTech.UserSessions.Session"]
     F --> G["🎨 Format-Display<br/>dashboard renderer"]
-    F --> H["📝 Format-Report<br/>markdown + HTML"]
+    F --> H["📝 Format-ReportHtml<br/>ticket-ready HTML"]
     F --> I["💀 Start-AsyncLogoff<br/>parallel WTSLogoffSession"]
 
     classDef blue fill:#2E71B8,stroke:#000,stroke-width:3px,color:#fff,font-weight:bold
@@ -77,7 +77,7 @@ graph LR
 | 🏃 **RunspacePool** | Parallelism | Scans and logoff operations fan out across a `RunspacePool` — throttled, PS 5.1-compatible. |
 | ⚙️ **WTS P/Invoke** | Session data | `WTSEnumerateSessions` + `WTSQuerySessionInformation` via P/Invoke. Locale-proof, no `quser.exe` parsing. |
 | 🎨 **Dashboard** | Display | 256-color ANSI with VT processing auto-enabled; box-drawing panels, Cylon-style async logoff progress bars. |
-| 📝 **Reports** | Ticket artifacts | Markdown (clipboard by default) and self-contained neobrutal HTML (browser preview by default). |
+| 📝 **Reports** | Ticket artifacts | Self-contained neobrutal HTML — temp file + browser preview + CF_HTML clipboard for rendered paste into HaloPSA / Outlook / Word. |
 
 ---
 
@@ -102,7 +102,7 @@ graph LR
     B -->|"logoff specific"| E["💀 Stop-UserSession"]
     D --> E
     C -->|"-LogOff"| F["⚡ Async parallel logoff"]
-    C -->|"-Report"| G["📝 Markdown / HTML"]
+    C -->|"-Report"| G["📝 HTML report"]
 
     classDef blue fill:#2E71B8,stroke:#000,stroke-width:2px,color:#fff,font-weight:bold
     classDef mint fill:#4ECDC4,stroke:#000,stroke-width:2px,color:#000,font-weight:bold
@@ -144,9 +144,9 @@ Show-UserSession
     [-OnlyDisabled]                   # filter to sessions for disabled AD users
     [-MinIdleDays <int>]              # filter by idle time
     [-LogOff]                         # async parallel logoff after render
-    [-Report markdown|html]           # generate ticket-ready artifact
+    [-Report]                         # generate ticket-ready HTML report
     [-ReportPath <string>]            # explicit output file (no auto-open)
-    [-Clipboard]                      # also copy to clipboard
+    [-Clipboard]                      # also copy to clipboard (CF_HTML rendered)
 ```
 
 ### `Stop-UserSession`
@@ -166,29 +166,27 @@ Accepts pipeline input from `Find-UserSession` via property binding —
 
 ## 📝 Reports
 
-`Show-UserSession -Report` generates a ticket-ready artifact capturing the
-scan snapshot, the filter scope, per-server session tables, and (when
+`Show-UserSession -Report` generates a ticket-ready HTML artifact capturing
+the scan snapshot, the filter scope, per-server session tables, and (when
 combined with `-LogOff`) the logoff tally and any failures.
 
 ### Behavior matrix
 
 | Combination | Output |
 |---|---|
-| `-Report markdown` | Plain-text clipboard (default) |
-| `-Report html` | **Rendered HTML clipboard (CF_HTML) + browser preview** |
-| `-Report markdown -ReportPath x.md` | File only |
-| `-Report markdown -ReportPath x.md -Clipboard` | File + clipboard |
-| `-Report html -ReportPath x.html` | File only — silent attachment mode (no browser, no clipboard) |
-| `-Report html -ReportPath x.html -Clipboard` | File + rendered clipboard |
-| `-Report html -Clipboard:$false` | Browser preview only, clipboard untouched |
-| `-ReportPath foo.md` (no `-Report`) | Format inferred from extension |
+| `-Report` | Temp file + browser preview + CF_HTML clipboard (rendered paste) |
+| `-Report -ReportPath x.html` | File only — silent attachment mode (no browser, no clipboard) |
+| `-Report -ReportPath x.html -Clipboard` | File + CF_HTML clipboard |
+| `-Report -Clipboard:$false` | Browser preview only, clipboard untouched |
+| `-ReportPath foo.html` (no `-Report`) | `-Report` is implied |
 
-### Markdown format
+### CF_HTML clipboard
 
-Clean GitHub/HaloPSA-friendly tables. Designed for direct paste into ticket
-systems. Includes operator identity, timestamp, scope, logoff result (if
-applicable), summary, per-server tables, disabled-user section, offline
-hosts, and errored hosts grouped by message.
+The clipboard write uses the Windows CF_HTML format with both
+`DataFormats.Html` and `DataFormats.UnicodeText` set on a single
+`DataObject`, so HaloPSA / Outlook / Word / Chrome all paste the
+report as **rendered** content (tables, colors, borders) instead of
+HTML source.
 
 ### HTML format — neobrutal
 
@@ -275,7 +273,6 @@ Configure via `.env` (see `.env.example`):
 │       ├── 🎨 ReportStyles.ps1              # Design tokens + CSS
 │       ├── 🧩 ReportHtmlSections.ps1        # Pure section renderers
 │       ├── 📄 ReportHtml.ps1                # HTML composer
-│       ├── 📝 ReportMarkdown.ps1            # Markdown composer
 │       └── 🚚 ReportDispatch.ps1            # File/clipboard/browser side effects
 ├── 📂 Public/                               # Exported cmdlets
 │   ├── 🔍 Find-UserSession.ps1

@@ -11,7 +11,7 @@ module. Human maintainers can skim it too.
 A PowerShell module for MSPs to enumerate, audit, and log off Windows
 Terminal Services sessions across an Active Directory domain — built
 around WTS Win32 API P/Invoke, runspace-pool parallelism, a rich ANSI
-dashboard, and ticket-ready markdown + HTML reports.
+dashboard, and a ticket-ready HTML report.
 
 Primary use case: **scheduled maintenance-window bulk logoffs** (e.g.,
 "please log everyone off the RDS farm tonight at 10pm"). Secondary use cases:
@@ -100,7 +100,6 @@ Invoke-UserSessionScan          ← orchestrator (private)
                     │   ├── ReportStyles     ← palette + CSS
                     │   ├── ReportHtmlSections ← section renderers (one per)
                     │   ├── ReportHtml       ← composer
-                    │   ├── ReportMarkdown   ← composer
                     │   └── ReportDispatch   ← file/clipboard/browser
                     │
                     └── Start-AsyncLogoff    ← parallel logoff
@@ -112,7 +111,7 @@ The reporting pipeline is structured to keep side effects at the edge:
 
 ```
 [raw scan+logoff+scope] → New-ReportContext → [presentation ViewModel]
-  → Format-ReportHtml / Format-ReportMarkdown → [string]
+  → Format-ReportHtml → [string]
   → Invoke-ReportDispatch → [file / clipboard / browser]
 ```
 
@@ -206,24 +205,41 @@ self-logoff. Never remove this guard.
 
 ---
 
-## Working with reports (Format-Report.ps1)
+## Working with reports
 
-`Show-UserSession -Report markdown|html` generates a ticket-ready artifact.
+`Show-UserSession -Report` generates a ticket-ready HTML artifact.
+HTML is the only format — markdown was dropped because every paste
+target we care about (HaloPSA, Outlook, Word) takes CF_HTML and
+renders it, so the markdown source variant was always strictly
+worse than the rendered version on the clipboard.
 
 ### Behavior matrix
 
 | Args | Output |
 |---|---|
-| `-Report markdown` | Clipboard |
-| `-Report html` | Temp file + auto-open in browser |
-| `-Report X -ReportPath P` | File at P, no auto-open |
-| `-Report X -ReportPath P -Clipboard` | File + clipboard |
+| `-Report` | Temp file + browser preview + CF_HTML clipboard |
+| `-Report -ReportPath P` | File at P, no browser, no clipboard |
+| `-Report -ReportPath P -Clipboard` | File + CF_HTML clipboard |
+| `-Report -Clipboard:$false` | Temp file + browser only |
+
+`-ReportPath` and `-Clipboard` both imply `-Report` if the switch
+itself is omitted, since neither makes sense without it.
 
 ### Auto-open rule
 
 HTML auto-opens in the default browser **only when no explicit
 `-ReportPath` is given**. If the user specified a path, assume they're
 attaching it to a ticket and don't want the browser popping up.
+
+### Clipboard format
+
+The clipboard write uses CF_HTML (multi-format `DataObject` with both
+`DataFormats.Html` and `DataFormats.UnicodeText`). The CF_HTML payload
+is built by hand in `ConvertTo-CfHtml` — the fragment markers MUST be
+inside `<body>`, not wrapping the `<html>` shell, or paste targets
+silently fall back to plain-text. `Set-ClipboardHtml` dispatches to a
+dedicated STA thread on PS7 (which is MTA by default) via the
+`ClipboardBridge` C# helper.
 
 ### Neobrutal design philosophy
 

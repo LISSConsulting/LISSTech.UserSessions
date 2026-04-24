@@ -10,9 +10,9 @@
 #   Parallel       — runspace helpers
 #   Display        — dashboard rendering + async logoff
 #   Reporting      — view model, styles, renderers, dispatch
-#                    (internal order: Model → Styles → Sections → Html/Markdown
-#                    → Dispatch, since sections use Styles + Model helpers,
-#                    composers use sections, dispatch uses the palette)
+#                    (internal order: Styles → Model → Sections → Html →
+#                    Dispatch, since sections use Styles + Model helpers,
+#                    composer uses sections, dispatch uses the palette)
 #   Workers        — scan worker scriptblocks
 #   Search         — AD DirectorySearcher wrapper
 #   Orchestrator   — the scan entry point
@@ -31,7 +31,6 @@ $loadOrder = @(
     'Private\Reporting\ReportModel.ps1'
     'Private\Reporting\ReportHtmlSections.ps1'
     'Private\Reporting\ReportHtml.ps1'
-    'Private\Reporting\ReportMarkdown.ps1'
     'Private\Reporting\ReportDispatch.ps1'
 
     'Private\Workers.ps1'

@@ -308,7 +308,7 @@ function Write-FleetSummaryStrip {
     $empty = $Scanned - $WithSessions
     if ($empty -lt 0) { $empty = 0 }
 
-    $pipe = $p.TitleDim + ' | ' + $p.Reset
+    $pipe = $p.TitleDim + '  ·  ' + $p.Reset
     $parts = @()
 
     # Always-present
@@ -323,13 +323,52 @@ function Write-FleetSummaryStrip {
     if ($Disabled -gt 0) { $parts += $p.Error   + ('{0} disabled' -f $Disabled) + $p.Reset }
     if ($Stale    -gt 0) { $parts += $p.Warning + ('{0} stale'    -f $Stale)    + $p.Reset }
     if ($Current  -gt 0) { $parts += $p.Current + ('{0} you'      -f $Current)  + $p.Reset }
-    if ($empty    -gt 0) { $parts += $p.TitleDim + ('{0} empty'   -f $empty)    + $p.Reset }
-    if ($Offline  -gt 0) { $parts += $p.TitleDim + ('{0} offline' -f $Offline)  + $p.Reset }
-    if ($Errored  -gt 0) { $parts += $p.Error   + ('{0} error'    -f $Errored)  + $p.Reset }
+    if ($empty    -gt 0) { $parts += $p.TitleDim + ('{0} empty' -f $empty) + $p.Reset }
+    # Offline + errored collapsed into one "unreachable" chip — both mean
+    # "we couldn't get session data from this host", and the breakdown by
+    # cause lives in the OFFLINE / ERROR tail rows below the table.
+    $unreachable = $Offline + $Errored
+    if ($unreachable -gt 0) { $parts += $p.Error + ('{0} unreachable' -f $unreachable) + $p.Reset }
 
     $parts += $p.TitleDim + ('{0:N1}s' -f $Elapsed.TotalSeconds) + $p.Reset
 
     Write-AnsiLine (' ' + ($parts -join $pipe))
+}
+
+function Get-FleetStretchedWidths {
+    <#
+    .SYNOPSIS
+        Expands the rightmost identity column (NOTE by preference, else the
+        last column in the map) so the row spans the full terminal width.
+
+        The breakpoint table gives us a sensible minimum; this absorbs the
+        remainder so a 160-col map on a 220-col terminal doesn't leave 60
+        columns of empty space to the right of the table. Pure function.
+    #>
+    param(
+        [Parameter(Mandatory)]$Widths,
+        [Parameter(Mandatory)][int]$TerminalWidth
+    )
+
+    $cols = @($Widths.Keys)
+    if ($cols.Count -eq 0) { return $Widths }
+
+    $sumWidths = 0
+    foreach ($k in $cols) { $sumWidths += [int]$Widths[$k] }
+    # Current row width: sum of cell widths + (N-1) single-space separators +
+    # 1 leading space. Cap target at TerminalWidth-1 so the final char doesn't
+    # trigger the right-margin wrap some terminals apply.
+    $current = $sumWidths + ($cols.Count - 1) + 1
+    $target  = $TerminalWidth - 1
+    $extra   = $target - $current
+    if ($extra -le 0) { return $Widths }
+
+    $stretchKey = if ($Widths.Contains('NOTE')) { 'NOTE' } else { $cols[-1] }
+    $result = [ordered]@{}
+    foreach ($k in $cols) {
+        $result[$k] = if ($k -eq $stretchKey) { [int]$Widths[$k] + $extra } else { [int]$Widths[$k] }
+    }
+    $result
 }
 
 function Get-FleetGroupedWidths {
@@ -437,8 +476,10 @@ function Write-FleetHostTail {
 function Write-FleetGrid {
     <#
     .SYNOPSIS
-        Renders the fleet dashboard: a single full-width table of all
-        sessions plus synthetic rows for offline/errored hosts.
+        Renders the fleet dashboard: a full-terminal-width table of all
+        sessions plus synthetic rows for offline/errored hosts. The NOTE
+        column is stretched to absorb remaining terminal width so error
+        messages are visible without truncation.
     .PARAMETER Sessions
         Filtered session objects.
     .PARAMETER Offline
@@ -458,16 +499,21 @@ function Write-FleetGrid {
         [string[]]$AllScannedHosts = @()
     )
 
-    $widths = Get-FleetColWidths -TerminalWidth $TerminalWidth
+    $baseWidths = Get-FleetColWidths -TerminalWidth $TerminalWidth
+    $widths = Get-FleetStretchedWidths -Widths $baseWidths -TerminalWidth $TerminalWidth
     $rows = Get-FleetOrderedRows -Sessions $Sessions -Offline $Offline -Errored $Errored
+    $sessionRows = @($rows | Where-Object { $_.RowKind -eq 'session' })
 
     if (-not $GroupByHost) {
+        # All rows — sessions + synthetic ERR/OFF — render in a single table.
+        # NOTE is stretched to absorb remaining terminal width, so full error
+        # text (e.g. "WTS service not responding (1722)") fits.
         Write-AnsiLine (Format-FleetHeaderRow -Widths $widths)
         Write-AnsiLine (Format-FleetDividerRow -Widths $widths)
 
         if ($rows.Count -eq 0) {
             $p = $script:Palette
-            Write-AnsiLine ('  ' + $p.TitleDim + '(no matching sessions)' + $p.Reset)
+            Write-AnsiLine (' ' + $p.TitleDim + '(no matching sessions)' + $p.Reset)
             return
         }
 
@@ -478,8 +524,8 @@ function Write-FleetGrid {
     }
 
     # -GroupByHost: separate tail for OFF/ERR, host bands for sessions.
-    $groupedWidths = Get-FleetGroupedWidths -Widths $widths
-    $sessionRows = @($rows | Where-Object { $_.RowKind -eq 'session' })
+    $groupedBase = Get-FleetGroupedWidths -Widths $baseWidths
+    $groupedWidths = Get-FleetStretchedWidths -Widths $groupedBase -TerminalWidth $TerminalWidth
 
     # Compute empty hosts: in scope but had no sessions and no explicit
     # offline/error listing. AllScannedHosts is optional — when supplied
@@ -497,7 +543,7 @@ function Write-FleetGrid {
 
     if ($sessionRows.Count -eq 0) {
         $p = $script:Palette
-        Write-AnsiLine ('  ' + $p.TitleDim + '(no matching sessions)' + $p.Reset)
+        Write-AnsiLine (' ' + $p.TitleDim + '(no matching sessions)' + $p.Reset)
     } else {
         # Host order: by highest-severity bucket in the host, then host asc.
         $hostPriority = @{}
@@ -840,24 +886,20 @@ function Write-AnsiLine {
 
 function Write-Banner {
     <#
-        Three-line banner:
-          line 1: module name (bold) + version (dim), right-aligned "LISS Technologies"
-          line 2: tagline describing what the tool does
-          line 3: runtime context — caller@host, PS edition/version, timestamp
+        Three flat header lines, no box. Visually distinct from the step
+        rows (▸ in cyan vs > in green) but uses the same one-glyph-prefix
+        cadence so the whole pre-table block reads as one unit.
 
         All values computed at call-time so version updates follow the
         manifest automatically.
     #>
     $p = $script:Palette
-    $b = $script:Box
-    $inner = $script:PanelWidth - 2
 
-    $moduleName = 'LISSTech.UserSessions.Session'
+    $moduleName = 'LISSTech.UserSessions'
     $version    = (Get-Module LISSTech.UserSessions).Version
     $versionStr = if ($version) { "v$version" } else { 'v?' }
-    $brand      = 'LISS Technologies'
 
-    $tagline    = 'Enumerate, audit, and log off Terminal Services sessions across AD.'
+    $tagline = 'Enumerate, audit, and log off Terminal Services sessions across AD.'
 
     $who   = '{0}@{1}' -f [Environment]::UserName, [Environment]::MachineName
     $psEd  = if ($PSVersionTable.PSEdition) { $PSVersionTable.PSEdition } else { 'Desktop' }
@@ -865,35 +907,14 @@ function Write-Banner {
     $now   = Get-Date -Format 'yyyy-MM-dd HH:mm'
     $context = '{0}  ·  PS {1} {2}  ·  {3}' -f $who, $psEd, $psVer, $now
 
-    # --- Line 1: module name + version, right-aligned brand ------------------
-    $left1  = '  ' + $p.Bold + $p.TitleFg + $moduleName + $p.Reset + '  ' +
-              $p.TitleDim + $versionStr + $p.Reset
-    $right1 = $p.Bold + $p.Info + $brand + $p.Reset + '  '
-    $leftVis1  = Get-VisibleLength $left1
-    $rightVis1 = Get-VisibleLength $right1
-    $gap1 = $inner - $leftVis1 - $rightVis1
-    if ($gap1 -lt 1) { $gap1 = 1 }
-    $line1 = $left1 + (' ' * $gap1) + $right1
-
-    # --- Line 2: tagline -----------------------------------------------------
-    $line2raw = '  ' + $p.TitleDim + $tagline + $p.Reset
-    $pad2 = $inner - (Get-VisibleLength $line2raw)
-    if ($pad2 -lt 0) { $pad2 = 0 }
-    $line2 = $line2raw + (' ' * $pad2)
-
-    # --- Line 3: runtime context --------------------------------------------
-    $line3raw = '  ' + $p.Logon + $context + $p.Reset
-    $pad3 = $inner - (Get-VisibleLength $line3raw)
-    if ($pad3 -lt 0) { $pad3 = 0 }
-    $line3 = $line3raw + (' ' * $pad3)
+    # ◆ is in the Consolas glyph set the rest of the dashboard relies on
+    # (● ○ ★ ◆ ⚠) — distinct from the green > used by Write-Step.
+    $glyph = $p.Info + '◆' + $p.Reset
 
     Write-Blank
-    Write-AnsiLine ($p.BorderBright + $b.TL + ($b.H * $inner) + $b.TR)
-    Write-AnsiLine ($p.BorderBright + $b.V + $line1 + $p.BorderBright + $b.V)
-    Write-AnsiLine ($p.BorderBright + $b.V + $line2 + $p.BorderBright + $b.V)
-    Write-AnsiLine ($p.BorderBright + $b.V + $line3 + $p.BorderBright + $b.V)
-    Write-AnsiLine ($p.BorderBright + $b.BL + ($b.H * $inner) + $b.BR)
-    Write-Blank
+    Write-AnsiLine (' ' + $glyph + ' ' + $p.Bold + $p.TitleFg + $moduleName + $p.Reset + ' ' + $p.TitleDim + $versionStr + $p.Reset)
+    Write-AnsiLine (' ' + $glyph + ' ' + $p.TitleDim + $tagline + $p.Reset)
+    Write-AnsiLine (' ' + $glyph + ' ' + $p.Logon + $context + $p.Reset)
 }
 
 function Write-Step {
@@ -902,7 +923,7 @@ function Write-Step {
 
     $p = $script:Palette
     $parts = @(
-        '  '
+        ' '
         $p.Success + '>' + $p.Reset
         ' '
         $p.TitleDim + (Format-Fixed -Text $Label -Width 22) + $p.Reset

@@ -19,8 +19,8 @@
 # --- Design tokens ----------------------------------------------------------
 
 $script:ReportPalette = @{
-    Bg       = '#f5f1e8'  # cream paper feel
-    Card     = '#ffffff'
+    Bg       = '#ffffff'
+    Card     = '#f5f1e8'  # cream paper feel
     Ink      = '#000000'  # all borders, all shadows
     Muted    = '#6b6b6b'
     Blue     = '#2e71b8'  # primary — banner, links
@@ -56,8 +56,8 @@ function Get-ReportCss {
     @'
 <style>
   :root {
-    --bg:        #f5f1e8;
-    --card:      #ffffff;
+    --bg:        #ffffff;
+    --card:      #f5f1e8;
     --ink:       #000000;
     --muted:     #6b6b6b;
     --blue:      #2e71b8;
@@ -382,6 +382,13 @@ function Get-ReportCss {
     vertical-align: middle;
   }
   table.sessions tbody tr:last-child td { border-bottom: none; }
+  /* Right-anchor the rightmost column so the timestamp sits flush against
+     the row's right edge. Without this, table-layout: auto distributes the
+     row's free width across the last cell, leaving a visible empty stripe
+     on the right side of every row when the report pastes into a wider
+     editor (HaloPSA, Outlook). */
+  table.sessions th:last-child,
+  table.sessions td:last-child { text-align: right; }
 
   .state-pill {
     display: inline-block;
@@ -515,6 +522,81 @@ function Get-ReportCss {
     table.sessions tr { page-break-inside: avoid; }
   }
 </style>
+'@
+}
+
+# --- Copy-to-clipboard widget ----------------------------------------------
+
+function Get-ReportCopyWidget {
+    <#
+    .SYNOPSIS
+        Returns a self-contained "Copy for Halo / Outlook" button + script.
+
+        Why: rich-text editors (HaloPSA, in particular) strip <style> tags
+        on paste, even from inside the CF_HTML fragment. The CF_HTML write
+        we do from PowerShell therefore pastes unstyled. The browser, when
+        you Ctrl+A → Ctrl+C, runs its native copy path which serializes
+        the selection with computed styles inlined per element — and THAT
+        markup pastes beautifully.
+
+        Triggering the same path from a button is reliable: select the
+        report content into a Range and call document.execCommand('copy').
+        Browser security requires a user gesture, so auto-copy on load is
+        not an option; a click is the gesture.
+
+        Hidden in print media so it doesn't appear in PDF exports.
+    #>
+    @'
+<button type="button" id="liss-copy-btn"
+        style="position:fixed;top:1rem;left:50%;transform:translateX(-50%);z-index:9999;
+               padding:0.7em 1.4em;font-family:'Inter',-apple-system,sans-serif;
+               font-size:0.9rem;font-weight:800;letter-spacing:0.08em;
+               text-transform:uppercase;background:#7fd865;color:#000;
+               border:3px solid #000;box-shadow:4px 4px 0 #000;cursor:pointer;
+               transition:background 80ms ease;">
+  Copy for Halo / Outlook
+</button>
+<style media="screen">
+  /* Hover/active need a single transform property so they don't fight the
+     translateX(-50%) used to center the button. */
+  #liss-copy-btn:hover  { transform: translate(calc(-50% - 1px), -1px); box-shadow: 5px 5px 0 #000; }
+  #liss-copy-btn:active { transform: translate(calc(-50% + 2px),  2px); box-shadow: 2px 2px 0 #000; }
+</style>
+<style media="print">
+  #liss-copy-btn { display: none !important; }
+</style>
+<script>
+  (function () {
+    var btn = document.getElementById('liss-copy-btn');
+    if (!btn) return;
+    var original = btn.textContent;
+    btn.addEventListener('click', function () {
+      var target = document.querySelector('.container') || document.body;
+      // setStartBefore / setEndAfter on the first/last ELEMENT children
+      // skips the leading/trailing whitespace text nodes that sit between
+      // the container's tags and its children — those produce phantom blank
+      // lines in the paste otherwise.
+      if (!target.firstElementChild || !target.lastElementChild) return;
+      var sel = window.getSelection();
+      var range = document.createRange();
+      btn.style.visibility = 'hidden';   // not selectable while we copy
+      range.setStartBefore(target.firstElementChild);
+      range.setEndAfter(target.lastElementChild);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      sel.removeAllRanges();
+      btn.style.visibility = 'visible';
+      btn.textContent = ok ? 'Copied!' : 'Copy failed';
+      btn.style.background = ok ? '#c7f464' : '#ffb3ba';
+      setTimeout(function () {
+        btn.textContent = original;
+        btn.style.background = '#7fd865';
+      }, 1800);
+    });
+  })();
+</script>
 '@
 }
 

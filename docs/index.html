@@ -6,7 +6,7 @@
 
 <!-- Primary Meta -->
 <title>LISSTech.UserSessions — Enumerate, Audit &amp; Log Off Terminal Services Sessions</title>
-<meta name="description" content="PowerShell module for MSPs to enumerate, audit, and log off Windows Terminal Services sessions across Active Directory. Rich ANSI dashboard, async parallel logoff, ticket-ready markdown &amp; HTML reports. Zero dependencies, PS 5.1+.">
+<meta name="description" content="PowerShell module for MSPs to enumerate, audit, and log off Windows Terminal Services sessions across Active Directory. Rich ANSI dashboard, async parallel logoff, ticket-ready HTML reports with rendered CF_HTML clipboard. Zero dependencies, PS 5.1+.">
 <meta name="keywords" content="PowerShell, Terminal Services, RDP, sessions, logoff, Active Directory, MSP, WTS, Remote Desktop, Windows Server, session management, LISS Technologies, LISSTech">
 <meta name="author" content="LISS Consulting, Corp.">
 <meta name="robots" content="index, follow">
@@ -48,7 +48,7 @@
   "name": "LISSTech.UserSessions",
   "applicationCategory": "DeveloperApplication",
   "operatingSystem": "Windows",
-  "description": "PowerShell module for MSPs to enumerate, audit, and log off Windows Terminal Services sessions across Active Directory. Rich ANSI dashboard, async parallel logoff, ticket-ready markdown and HTML reports.",
+  "description": "PowerShell module for MSPs to enumerate, audit, and log off Windows Terminal Services sessions across Active Directory. Rich ANSI dashboard, async parallel logoff, ticket-ready HTML reports with rendered CF_HTML clipboard.",
   "url": "https://lissconsulting.github.io/LISSTech.UserSessions/",
   "downloadUrl": "https://www.powershellgallery.com/packages/LISSTech.UserSessions",
   "softwareVersion": "26.113.2",
@@ -1150,7 +1150,7 @@
         <div class="feature-card">
           <div class="feature-icon">&#9998;</div>
           <h3>Ticket-Ready Reports</h3>
-          <p>Markdown (clipboard) and self-contained neobrutal HTML (browser). Paste directly into HaloPSA, ConnectWise, or any ticket system.</p>
+          <p>Self-contained neobrutal HTML, browser preview plus CF_HTML rendered-paste clipboard. Drop straight into HaloPSA, ConnectWise, Outlook, or any ticket system.</p>
         </div>
 
         <div class="feature-card">
@@ -1195,9 +1195,8 @@ Find-UserSession -Username jmariano |
           </div>
           <div class="cmdlet-body">
             <p>Rich dashboard with optional async logoff and report generation. The daily driver.</p>
-            <div class="example"><span class="comment"># Scan, logoff, report — one command</span>
-Show-UserSession -LogOff -Confirm:$false `
-  -Report markdown</div>
+            <div class="example"><span class="comment"># Scan, logoff, rendered HTML report on the clipboard — one command</span>
+Show-UserSession -LogOff -Confirm:$false -Report</div>
           </div>
         </div>
 
@@ -1279,12 +1278,12 @@ Find-UserSession |
       <div class="report-grid">
 
         <div class="report-card">
-          <div class="report-card-header md">
-            <h3>Markdown</h3>
-            <span class="format-tag">MD</span>
+          <div class="report-card-header html">
+            <h3>Neobrutal HTML</h3>
+            <span class="format-tag">HTML</span>
           </div>
           <div class="report-card-body">
-            <p>Clean GitHub/HaloPSA-friendly tables. Copies straight to clipboard by default.</p>
+            <p>Self-contained single-file document. Browser preview plus CF_HTML clipboard for rendered paste into HaloPSA, Outlook, Word.</p>
             <ul>
               <li>Operator identity &amp; timestamp</li>
               <li>Scope description</li>
@@ -1292,24 +1291,7 @@ Find-UserSession |
               <li>Logoff result tally</li>
               <li>Disabled user section</li>
               <li>Offline &amp; errored hosts</li>
-            </ul>
-          </div>
-        </div>
-
-        <div class="report-card">
-          <div class="report-card-header html">
-            <h3>Neobrutal HTML</h3>
-            <span class="format-tag">HTML</span>
-          </div>
-          <div class="report-card-body">
-            <p>Self-contained single-file document. Pastes as formatted content via CF_HTML clipboard.</p>
-            <ul>
-              <li>Thick borders, flat colors, heavy shadows</li>
-              <li>900-weight chunky typography</li>
-              <li>Color-coded session states</li>
-              <li>Logoff result banner card</li>
               <li>Print-to-PDF ready</li>
-              <li>No external dependencies</li>
             </ul>
           </div>
         </div>

@@ -1,6 +1,6 @@
 ﻿@{
     RootModule           = 'LISSTech.UserSessions.psm1'
-    ModuleVersion        = '26.113.2'
+    ModuleVersion        = '26.114.4'
     GUID                 = '9de7e566-21a5-44b1-be2b-73add8bf3e4e'
     Author               = 'LISS Technologies'
     CompanyName          = 'LISS Consulting, Corp.'
@@ -12,7 +12,7 @@ via the WTSEnumerateSessions Win32 API. Three cmdlets:
 
   Find-UserSession  : emits session objects (pipeline-friendly, scriptable)
   Show-UserSession  : renders a rich terminal report with async parallel logoff
-                      and optional markdown/HTML ticket reports
+                      and an optional ticket-ready HTML report
   Stop-UserSession  : pipeline-bound WTSLogoffSession wrapper
 
 Designed for MSP maintenance-window workflows — scan a domain, filter sessions,
@@ -47,7 +47,6 @@ module dependencies (AD lookups use DirectorySearcher).
         'Private\Reporting\ReportModel.ps1'
         'Private\Reporting\ReportHtmlSections.ps1'
         'Private\Reporting\ReportHtml.ps1'
-        'Private\Reporting\ReportMarkdown.ps1'
         'Private\Reporting\ReportDispatch.ps1'
         'Private\Workers.ps1'
         'Private\Search-Directory.ps1'
@@ -69,7 +68,6 @@ module dependencies (AD lookups use DirectorySearcher).
     ReportStyles    — palette + CSS in one place
     ReportHtmlSections — one pure function per section (OCP)
     ReportHtml      — composer (reads like a table of contents)
-    ReportMarkdown  — markdown composer, same ReportContext input
     ReportDispatch  — side effects (file, clipboard, browser)
   * New-ReportContext is the seam: presentation shape independent of
     scan result internals, so tests can inject synthetic data.

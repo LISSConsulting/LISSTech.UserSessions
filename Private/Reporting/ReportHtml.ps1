@@ -41,6 +41,7 @@ function Format-ReportHtml {
 $(Get-ReportCss)
 </head>
 <body>
+$(Get-ReportCopyWidget)
 <div class="container">
 $body
 </div>
