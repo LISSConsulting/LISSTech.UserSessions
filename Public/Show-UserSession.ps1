@@ -1,12 +1,18 @@
 ﻿function Show-UserSession {
     <#
     .SYNOPSIS
-        Renders a Textual-style report of user sessions with optional
+        Renders a full-width fleet table of user sessions with optional
         asynchronous logoff and ticket-ready report generation.
 
     .DESCRIPTION
-        Scans target servers and renders the results as bordered panels
-        with color-coded column data, closed by a status-bar footer.
+        Scans target servers and renders the results as a single FleetGrid
+        table: a one-line FLEET summary strip above a column-aligned body
+        of sessions plus synthetic rows for offline and errored hosts.
+        Rows are priority-sorted — disabled-user sessions first, then stale
+        disconnected (≥7 days), then the caller's own session, then the
+        rest. Use -GroupByHost for a per-host grouped layout with a tail
+        section for empty, offline, and errored hosts.
+
         With -LogOff, visible sessions are logged off in parallel with
         live docker-pull style progress — each gets a Cylon scanner bar
         while in flight, then flips to a final ✓/✗ on completion.
@@ -36,6 +42,13 @@
 
     .PARAMETER MinIdleDays
         Restrict display and logoff to sessions idle at least N days.
+
+    .PARAMETER GroupByHost
+        Render sessions clustered under per-host band headers instead of
+        a single flat priority-sorted table. Hosts are ordered by highest
+        severity present (disabled > stale > current > normal). Offline,
+        errored, and zero-session hosts move to a tail section below
+        the table.
 
     .PARAMETER LogOff
         After rendering, forward visible sessions to the async logoff
@@ -109,6 +122,7 @@
         [int]$MinIdleDays = 0,
 
         [switch]$IncludeEmpty,
+        [switch]$GroupByHost,
         [switch]$LogOff,
 
         [ValidateSet('markdown', 'html')]
@@ -183,46 +197,65 @@
             Write-Debug "Show-UserSession → after MinIdleDays=${MinIdleDays}: $($sessions.Count) session(s)"
         }
 
-        # -- Render server panels --------------------------------------------
-        $serverGroups = @($sessions | Group-Object Server | Sort-Object Name)
-
-        switch ($true) {
-            ($serverGroups.Count -eq 0 -and -not $IncludeEmpty) {
-                Write-EmptyState
-                break
-            }
-            default {
-                foreach ($group in $serverGroups) {
-                    Write-Blank
-                    Write-ServerPanel -Name $group.Name -Sessions $group.Group
-                }
-            }
-        }
-
         # -- Compute summary stats -------------------------------------------
         $stateActive = [LISSTech.Wts.WtsConnectState]::Active
         $stateDisc   = [LISSTech.Wts.WtsConnectState]::Disconnected
+        $staleLimit  = [TimeSpan]::FromDays(7)
 
         $activeCount   = @($sessions.Where({ $_.State -eq $stateActive })).Count
         $discCount     = @($sessions.Where({ $_.State -eq $stateDisc })).Count
-        $otherCount    = $sessions.Count - $activeCount - $discCount
         $disabledCount = @($sessions.Where({ $_.IsUserDisabled })).Count
-        $uniqueCount   = @($sessions | Select-Object -ExpandProperty Username | Sort-Object -Unique).Count
+        $staleCount    = @($sessions.Where({
+            $_.State -eq $stateDisc -and $_.IdleTime -ge $staleLimit
+        })).Count
+        $currentCount  = @($sessions.Where({ $_.IsCurrent })).Count
+        $serverGroups  = @($sessions | Select-Object -ExpandProperty Server | Sort-Object -Unique)
 
-        $statusBarParams = @{
+        # -- Summary strip (one line, above the table) -----------------------
+        Write-Blank
+        $stripParams = @{
             Scanned      = $scan.Scanned
             WithSessions = $serverGroups.Count
             Total        = $sessions.Count
             Active       = $activeCount
             Disc         = $discCount
-            Other        = $otherCount
-            Unique       = $uniqueCount
             Disabled     = $disabledCount
+            Stale        = $staleCount
+            Current      = $currentCount
             Offline      = $scan.Offline.Count
-            Errored      = $scan.Errored
+            Errored      = @($scan.Errored).Count
             Elapsed      = $scan.Elapsed
         }
-        Write-StatusBar @statusBarParams
+        Write-FleetSummaryStrip @stripParams
+        Write-Blank
+
+        # -- Render FleetGrid ------------------------------------------------
+        if ($sessions.Count -eq 0 -and $scan.Offline.Count -eq 0 -and @($scan.Errored).Count -eq 0 -and -not $IncludeEmpty) {
+            Write-EmptyState
+        } else {
+            $gridParams = @{
+                Sessions         = $sessions
+                Offline          = @($scan.Offline)
+                Errored          = @($scan.Errored)
+                GroupByHost      = [bool]$GroupByHost
+                AllScannedHosts  = if ($GroupByHost -and $scan.Scanned -gt 0) {
+                    # Best-effort: sessions + offline + errored host names (we
+                    # don't have the full scanned-host list here). Callers who
+                    # want empty-host footnotes should supply -ComputerName.
+                    $names = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+                    foreach ($s in $sessions)      { [void]$names.Add($s.Server) }
+                    foreach ($o in @($scan.Offline)) {
+                        $n = if ($o.PSObject.Properties['Name']) { $o.Name } else { [string]$o }
+                        [void]$names.Add($n)
+                    }
+                    foreach ($e in @($scan.Errored)) { [void]$names.Add($e.Server) }
+                    if ($ComputerName) { foreach ($c in $ComputerName) { [void]$names.Add($c) } }
+                    $names
+                } else { @() }
+            }
+            Write-FleetGrid @gridParams
+        }
+        Write-Blank
 
         # -- Optional async logoff -------------------------------------------
         $logoffResult = $null
