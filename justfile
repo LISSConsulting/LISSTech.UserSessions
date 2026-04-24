@@ -69,7 +69,7 @@ sign:
         Write-Warning 'CODE_SIGNING_CERTIFICATE_THUMBPRINT not set; skipping signing.'; \
         exit 0 \
     }
-    $cert = Get-ChildItem Cert:\CurrentUser\My | `
+    $cert = Get-ChildItem Cert:\CurrentUser\My | \
         Where-Object Thumbprint -eq $env:CODE_SIGNING_CERTIFICATE_THUMBPRINT | \
         Select-Object -First 1
     if (-not $cert) { throw 'Signing certificate not found in Cert:\CurrentUser\My' }
