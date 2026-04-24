@@ -345,6 +345,153 @@
   .install-cmd .cmdlet {
     color: var(--star-gold);
   }
+  .install-copy {
+    background: var(--night-mid);
+    border: 2px solid var(--star-gold);
+    color: var(--star-gold);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 0.5em 0.9em;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, transform 0.1s;
+    user-select: none;
+  }
+  .install-copy:hover {
+    background: var(--star-gold);
+    color: var(--ink);
+  }
+  .install-copy:active { transform: translate(1px, 1px); }
+  .install-copy.copied {
+    background: var(--cypress-mid);
+    border-color: var(--cypress-mid);
+    color: var(--star-pale);
+  }
+
+  /* ============================================================ HERO BADGES */
+  .hero-shields {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 2rem;
+  }
+  .hero-shields img {
+    height: 22px;
+    display: block;
+    border: 2px solid var(--ink);
+    box-shadow: 3px 3px 0 var(--ink);
+  }
+
+  /* ============================================================ HERO PREVIEW */
+  .hero-preview-wrap {
+    max-width: 840px;
+    margin: 3rem auto 0;
+    padding: 0 1rem;
+  }
+  .hero-preview-label {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--star-gold);
+    text-align: left;
+    margin: 0 0 0.6rem 0.5rem;
+    opacity: 0.75;
+  }
+  .preview-frame {
+    background: #050815;
+    border: var(--border-lg);
+    box-shadow: 10px 10px 0 var(--ink), 10px 10px 0 2px var(--star-gold);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: var(--star-pale);
+    text-align: left;
+    overflow-x: auto;
+    position: relative;
+  }
+  .preview-chrome {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.55rem 1rem;
+    background: var(--night-mid);
+    border-bottom: 3px solid var(--ink);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--moon);
+  }
+  .preview-chrome .dot {
+    width: 12px; height: 12px; border-radius: 50%;
+    border: 2px solid var(--ink); flex: 0 0 auto;
+  }
+  .preview-chrome .dot.r { background: #e74c3c; }
+  .preview-chrome .dot.y { background: #f0c75e; }
+  .preview-chrome .dot.g { background: #5cb85c; }
+  .preview-chrome .title { margin-left: 0.5rem; opacity: 0.7; }
+  .preview-body {
+    padding: 1rem 1.25rem;
+    white-space: pre;
+    min-height: 14.5em;
+  }
+  .preview-body .line { display: block; }
+  .preview-body .g { color: var(--star-gold); }
+  .preview-body .gb { color: var(--star-bright); font-weight: 700; }
+  .preview-body .b { color: var(--cobalt-light); }
+  .preview-body .gr { color: #88a878; }
+  .preview-body .dim { color: #4a5a8a; }
+  .preview-body .warn { color: #e89a6a; }
+  .preview-body .red { color: #e7856f; }
+  .preview-body .w { color: var(--star-pale); }
+  .preview-body .active { color: #7dc47d; }
+  .preview-body .disc { color: var(--cobalt-light); }
+
+  .preview-cursor {
+    display: inline-block;
+    width: 0.55em;
+    height: 1em;
+    background: var(--star-gold);
+    vertical-align: text-bottom;
+    margin-left: 0.2em;
+    animation: cursor-blink 1s steps(2) infinite;
+  }
+  @keyframes cursor-blink {
+    0%, 50% { opacity: 1; }
+    50.01%, 100% { opacity: 0; }
+  }
+
+  .preview-body .line {
+    opacity: 0;
+    animation: line-in 0.18s ease-out forwards;
+  }
+  .preview-body .line:nth-child(1)  { animation-delay: 0.05s; }
+  .preview-body .line:nth-child(2)  { animation-delay: 0.14s; }
+  .preview-body .line:nth-child(3)  { animation-delay: 0.22s; }
+  .preview-body .line:nth-child(4)  { animation-delay: 0.30s; }
+  .preview-body .line:nth-child(5)  { animation-delay: 0.38s; }
+  .preview-body .line:nth-child(6)  { animation-delay: 0.46s; }
+  .preview-body .line:nth-child(7)  { animation-delay: 0.54s; }
+  .preview-body .line:nth-child(8)  { animation-delay: 0.62s; }
+  .preview-body .line:nth-child(9)  { animation-delay: 0.70s; }
+  .preview-body .line:nth-child(10) { animation-delay: 0.78s; }
+  .preview-body .line:nth-child(11) { animation-delay: 0.86s; }
+  .preview-body .line:nth-child(12) { animation-delay: 0.94s; }
+  .preview-body .line:nth-child(13) { animation-delay: 1.02s; }
+  @keyframes line-in {
+    from { opacity: 0; transform: translateX(-0.3em); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .preview-body .line { animation: none; opacity: 1; }
+    .preview-cursor { animation: none; }
+  }
 
   /* ============================================================ FEATURES */
   .features {
@@ -832,11 +979,20 @@
   }
 
   /* ============================================================ RESPONSIVE */
+  @media (max-width: 900px) {
+    .preview-body { font-size: 0.66rem; padding: 0.75rem 0.9rem; }
+    .preview-frame { box-shadow: 6px 6px 0 var(--ink), 6px 6px 0 2px var(--star-gold); }
+    .hero-preview-wrap { margin-top: 2.25rem; }
+  }
   @media (max-width: 600px) {
     .hero { padding: 4rem 0 3rem; }
     .arch-step:not(:last-child)::after { display: none; }
     .arch-flow { grid-template-columns: repeat(3, 1fr); gap: 1rem; }
     nav ul { gap: 0.1rem; }
+    .install-cmd { flex-wrap: wrap; padding: 0.8rem 1rem; font-size: 0.85rem; }
+    .install-copy { order: 99; }
+    .hero-shields img { height: 20px; }
+    .preview-body { font-size: 0.56rem; line-height: 1.45; }
   }
 </style>
 </head>
@@ -865,11 +1021,36 @@
   <section class="hero">
     <div class="container">
       <div class="hero-badge">PowerShell 5.1+ &middot; Windows Server 2016+ &middot; Zero Dependencies</div>
+      <div class="hero-shields" aria-label="Package and project status">
+        <a href="https://www.powershellgallery.com/packages/LISSTech.UserSessions" rel="noopener">
+          <img src="https://img.shields.io/powershellgallery/v/LISSTech.UserSessions?style=flat-square&label=PSGallery&labelColor=0b1026&color=f0c75e" alt="PSGallery version">
+        </a>
+        <a href="https://www.powershellgallery.com/packages/LISSTech.UserSessions" rel="noopener">
+          <img src="https://img.shields.io/powershellgallery/dt/LISSTech.UserSessions?style=flat-square&label=downloads&labelColor=0b1026&color=3b5998" alt="PSGallery downloads">
+        </a>
+        <a href="https://github.com/LISSConsulting/LISSTech.UserSessions/stargazers" rel="noopener">
+          <img src="https://img.shields.io/github/stars/LISSConsulting/LISSTech.UserSessions?style=flat-square&labelColor=0b1026&color=f0c75e" alt="GitHub stars">
+        </a>
+        <a href="https://github.com/LISSConsulting/LISSTech.UserSessions/blob/trunk/LICENSE" rel="noopener">
+          <img src="https://img.shields.io/github/license/LISSConsulting/LISSTech.UserSessions?style=flat-square&label=license&labelColor=0b1026&color=3b5998" alt="License">
+        </a>
+      </div>
       <h1>Terminal Services,<br><em>Respectfully.</em></h1>
       <p class="subtitle">Enumerate, audit, and log off Windows sessions across Active Directory &mdash; with a rich dashboard, async parallel logoff, and ticket-ready reports.</p>
       <div class="hero-actions">
         <a href="https://github.com/LISSConsulting/LISSTech.UserSessions" class="btn btn-primary">View on GitHub</a>
         <a href="https://www.powershellgallery.com/packages/LISSTech.UserSessions" class="btn btn-secondary">PSGallery</a>
+      </div>
+
+      <div class="hero-preview-wrap">
+        <p class="hero-preview-label">&#9733; Show-UserSession &mdash; live dashboard</p>
+        <div class="preview-frame" role="img" aria-label="Terminal screenshot of the Show-UserSession dashboard showing 4 sessions on RDS-01, one current and one for a disabled user">
+          <div class="preview-chrome">
+            <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+            <span class="title">PS&gt; Show-UserSession</span>
+          </div>
+          <div class="preview-body"><span class="line"><span class="dim">┌─</span> <span class="gb">RDS-01.corp.local</span> <span class="dim">──────────────────────────────────</span> <span class="active">3 active</span> <span class="dim">&middot;</span> <span class="disc">1 disc</span> <span class="dim">─┐</span></span><span class="line"><span class="dim">│</span>                                                                            <span class="dim">│</span></span><span class="line"><span class="dim">│</span>  <span class="g">USER</span>                <span class="g">STATE</span>       <span class="g">WINSTATION</span>   <span class="g">IDLE</span>      <span class="g">LOGON</span>           <span class="dim">│</span></span><span class="line"><span class="dim">│</span>  <span class="dim">────────────────────────────────────────────────────────────────────────</span>  <span class="dim">│</span></span><span class="line"><span class="dim">│</span>  <span class="active">●</span> alice.hart         <span class="active">Active</span>      RDP-Tcp#2    <span class="gr">12m</span>       Mon 08:14       <span class="dim">│</span></span><span class="line"><span class="dim">│</span>  <span class="active">●</span> <span class="gb">jmariano</span>           <span class="active">Active</span>      RDP-Tcp#3    <span class="gb">02m</span>       Mon 09:47       <span class="dim">│</span> <span class="gb">◆ YOU</span></span><span class="line"><span class="dim">│</span>  <span class="active">●</span> bob.chen           <span class="active">Active</span>      Console      <span class="warn">47m</span>       Mon 07:30       <span class="dim">│</span></span><span class="line"><span class="dim">│</span>  <span class="disc">○</span> ghost.account <span class="red">⚠</span>     <span class="disc">Disc</span>        RDP-Tcp#7    <span class="red">18d</span>       Apr 06 02:11    <span class="dim">│</span></span><span class="line"><span class="dim">│</span>                                                                            <span class="dim">│</span></span><span class="line"><span class="dim">└────────────────────────────────────────────────────────────────────────────┘</span></span><span class="line"></span><span class="line"><span class="g">  Scanned 1 host &middot; 4 sessions &middot; 1 disabled &middot; 0.42s</span></span><span class="line"><span class="b">PS&gt;</span> <span class="preview-cursor"></span></span></div>
+        </div>
       </div>
     </div>
   </section>
@@ -878,9 +1059,57 @@
   <div class="install-strip">
     <div class="install-cmd">
       <span class="prompt">PS&gt;</span>
-      <span><span class="cmdlet">Install-Module</span> LISSTech.UserSessions</span>
+      <span id="install-cmd-text"><span class="cmdlet">Install-Module</span> LISSTech.UserSessions</span>
+      <button type="button" class="install-copy" id="install-copy" aria-label="Copy install command">Copy</button>
     </div>
   </div>
+
+  <script>
+    (function () {
+      var btn = document.getElementById('install-copy');
+      if (!btn) return;
+      btn.addEventListener('click', function () {
+        var cmd = 'Install-Module LISSTech.UserSessions';
+        var done = function () {
+          var original = btn.textContent;
+          btn.textContent = 'Copied!';
+          btn.classList.add('copied');
+          setTimeout(function () {
+            btn.textContent = original;
+            btn.classList.remove('copied');
+          }, 1600);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(cmd).then(done).catch(function () {
+            /* fall through to legacy path */
+            try {
+              var ta = document.createElement('textarea');
+              ta.value = cmd;
+              ta.style.position = 'fixed';
+              ta.style.opacity = '0';
+              document.body.appendChild(ta);
+              ta.select();
+              document.execCommand('copy');
+              document.body.removeChild(ta);
+              done();
+            } catch (e) { /* give up silently */ }
+          });
+        } else {
+          try {
+            var ta = document.createElement('textarea');
+            ta.value = cmd;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            done();
+          } catch (e) { /* give up silently */ }
+        }
+      });
+    })();
+  </script>
 
   <div class="flourish">&#10045; &middot; &#10045; &middot; &#10045;</div>
 
