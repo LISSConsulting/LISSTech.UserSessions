@@ -39,7 +39,7 @@ try {
 if (-not ('LISSTech.UserSessions.VT' -as [type])) {
     Write-Debug 'Format-Display → registering VT interop type'
 
-    Add-Type -Namespace 'LISSTech.UserSessions.Session' -Name 'VT' -MemberDefinition @'
+    Add-Type -Namespace 'LISSTech.UserSessions' -Name 'VT' -MemberDefinition @'
         [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError=true)]
         public static extern System.IntPtr GetStdHandle(int nStdHandle);
         [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError=true)]
