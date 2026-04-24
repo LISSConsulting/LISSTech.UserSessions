@@ -915,6 +915,7 @@ function Write-Banner {
     Write-AnsiLine (' ' + $glyph + ' ' + $p.Bold + $p.TitleFg + $moduleName + $p.Reset + ' ' + $p.TitleDim + $versionStr + $p.Reset)
     Write-AnsiLine (' ' + $glyph + ' ' + $p.TitleDim + $tagline + $p.Reset)
     Write-AnsiLine (' ' + $glyph + ' ' + $p.Logon + $context + $p.Reset)
+    Write-Blank
 }
 
 function Write-Step {

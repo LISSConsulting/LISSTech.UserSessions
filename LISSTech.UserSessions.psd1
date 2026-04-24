@@ -1,6 +1,6 @@
 ﻿@{
     RootModule           = 'LISSTech.UserSessions.psm1'
-    ModuleVersion        = '26.114.4'
+    ModuleVersion        = '26.114.5'
     GUID                 = '9de7e566-21a5-44b1-be2b-73add8bf3e4e'
     Author               = 'LISS Technologies'
     CompanyName          = 'LISS Consulting, Corp.'
