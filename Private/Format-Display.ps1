@@ -104,11 +104,291 @@ $script:FleetCol = @{
     80  = [ordered]@{ PRI = 3; SERVER = 14; USER = 16; ST = 4; IDLE =  7;                                 NOTE = 30 }
     100 = [ordered]@{ PRI = 3; SERVER = 16; USER = 17; ST = 4; SESSION = 12; IDLE =  7; LOGON = 12;       NOTE = 21 }
     120 = [ordered]@{ PRI = 3; SERVER = 18; USER = 18; ST = 4; SESSION = 12; IDLE =  7; LOGON = 14; ACCOUNT = 10; NOTE = 18 }
-    160 = [ordered]@{ PRI = 3; SERVER = 22; USER = 22; ST = 4; SESSION = 16; IDLE =  7; LOGON = 16; ACCOUNT = 10; NOTE = 52 }
-    200 = [ordered]@{ PRI = 3; SERVER = 24; USER = 24; DOMAIN = 12; ST = 4; SESSION = 18; IDLE =  7; LASTINPUT = 16; LOGON = 16; ACCOUNT = 10; NOTE = 46 }
+    160 = [ordered]@{ PRI = 3; SERVER = 22; USER = 22; ST = 4; SESSION = 16; IDLE =  7; LOGON = 17; ACCOUNT = 10; NOTE = 51 }
+    200 = [ordered]@{ PRI = 3; SERVER = 24; USER = 24; DOMAIN = 12; ST = 4; SESSION = 18; IDLE =  7; LASTINPUT = 17; LOGON = 17; ACCOUNT = 10; NOTE = 44 }
 }
 
 $script:FleetStaleThreshold = [TimeSpan]::FromDays(7)
+$script:FleetIdleWarmThreshold = [TimeSpan]::FromHours(1)
+
+function Format-FleetBucketGlyph {
+    <# Returns the 2-char glyph for the PRI column. Total column is 3 chars
+       because the cell is left-padded by one space for visual rhythm. #>
+    param([string]$Bucket)
+    switch ($Bucket) {
+        'ERR' { 'ERR' }
+        'OFF' { 'OFF' }
+        '!!'  { '!!' }
+        '!'   { '! ' }
+        '*'   { '* ' }
+        default { '  ' }
+    }
+}
+
+function Get-FleetBucketColor {
+    <# Palette key for the PRI glyph. #>
+    param([string]$Bucket)
+    $p = $script:Palette
+    switch ($Bucket) {
+        'ERR'   { $p.Error }
+        'OFF'   { $p.TitleDim }
+        '!!'    { $p.Error }
+        '!'     { $p.Warning }
+        '*'     { $p.Current }
+        default { $p.TitleDim }
+    }
+}
+
+function Get-FleetIdleColor {
+    <# Idle color by bucket: fresh <1h dim, warm 1h..7d warning, hot >=7d hot. #>
+    param([TimeSpan]$Span)
+    $p = $script:Palette
+    if ($Span -ge $script:FleetStaleThreshold)    { return $p.IdleHot }
+    if ($Span -ge $script:FleetIdleWarmThreshold) { return $p.Warning }
+    $p.Logon
+}
+
+function Format-FleetNote {
+    <# NOTE column content per row kind / bucket. #>
+    param($Row)
+    switch ($Row.RowKind) {
+        'error'   { return $Row.HostNote }
+        'offline' { return 'offline' }
+    }
+    switch ($Row.Bucket) {
+        '!!' { 'disabled' }
+        '!'  { 'stale' }
+        '*'  { 'YOU' }
+        default { '' }
+    }
+}
+
+function Get-FleetNoteColor {
+    param($Row)
+    $p = $script:Palette
+    switch ($Row.RowKind) {
+        'error'   { return $p.Error }
+        'offline' { return $p.TitleDim }
+    }
+    switch ($Row.Bucket) {
+        '!!'    { $p.Error }
+        '!'     { $p.Warning }
+        '*'     { $p.Current }
+        default { $p.TitleDim }
+    }
+}
+
+function Format-FleetAccount {
+    <# ACCOUNT column: 'DISABLED' or 'OK' for sessions, '—' for host rows. #>
+    param($Row)
+    if ($Row.RowKind -ne 'session') { return '—' }
+    if ($Row.Session.IsUserDisabled) { 'DISABLED' } else { 'OK' }
+}
+
+function Get-FleetAccountColor {
+    param($Row)
+    $p = $script:Palette
+    if ($Row.RowKind -ne 'session') { return $p.TitleDim }
+    if ($Row.Session.IsUserDisabled) { $p.Error } else { $p.TitleDim }
+}
+
+# Column renderer — one entry per known column. Each takes ($Row, $Widths,
+# $Palette) and returns (visible text, palette color). Format-FleetCell
+# applies Format-Fixed + the color ESC codes.
+$script:FleetCellRenderers = @{
+    PRI = {
+        param($Row, $W, $P)
+        @((Format-FleetBucketGlyph $Row.Bucket).PadRight($W.PRI), (Get-FleetBucketColor $Row.Bucket))
+    }
+    SERVER = {
+        param($Row, $W, $P)
+        @((Format-Fixed -Text $Row.Server -Width $W.SERVER), $P.Server)
+    }
+    USER = {
+        param($Row, $W, $P)
+        if ($Row.RowKind -ne 'session') { return @((Format-Fixed -Text '—' -Width $W.USER), $P.TitleDim) }
+        $color = if ($Row.Session.IsUserDisabled) { $P.Error } else { $P.Username }
+        @((Format-Fixed -Text $Row.Session.Username -Width $W.USER), $color)
+    }
+    DOMAIN = {
+        param($Row, $W, $P)
+        $text = if ($Row.RowKind -ne 'session') { '—' } else { $Row.Session.Domain }
+        @((Format-Fixed -Text $text -Width $W.DOMAIN), $P.TitleDim)
+    }
+    ST = {
+        param($Row, $W, $P)
+        if ($Row.RowKind -ne 'session') { return @((Format-Fixed -Text '—' -Width $W.ST), $P.TitleDim) }
+        $text = Format-State $Row.Session.State
+        $color = if ($Row.Session.State -eq [LISSTech.Wts.WtsConnectState]::Active) { $P.Active } else { $P.Disc }
+        @((Format-Fixed -Text $text -Width $W.ST), $color)
+    }
+    SESSION = {
+        param($Row, $W, $P)
+        if ($Row.RowKind -ne 'session') { return @((Format-Fixed -Text '—' -Width $W.SESSION), $P.TitleDim) }
+        $text = if ([string]::IsNullOrWhiteSpace($Row.Session.WinStation)) { '—' } else { $Row.Session.WinStation }
+        @((Format-Fixed -Text $text -Width $W.SESSION), $P.WinStation)
+    }
+    IDLE = {
+        param($Row, $W, $P)
+        if ($Row.RowKind -ne 'session') { return @((Format-Fixed -Text '—' -Width $W.IDLE), $P.TitleDim) }
+        $text = Format-FleetIdle -Span $Row.Session.IdleTime
+        @((Format-Fixed -Text $text -Width $W.IDLE), (Get-FleetIdleColor $Row.Session.IdleTime))
+    }
+    LASTINPUT = {
+        param($Row, $W, $P)
+        if ($Row.RowKind -ne 'session' -or $null -eq $Row.Session.LastInputTime) {
+            return @((Format-Fixed -Text '—' -Width $W.LASTINPUT), $P.TitleDim)
+        }
+        @((Format-Fixed -Text ($Row.Session.LastInputTime.ToString('M/d/yyyy h:mm tt')) -Width $W.LASTINPUT), $P.Logon)
+    }
+    LOGON = {
+        param($Row, $W, $P)
+        if ($Row.RowKind -ne 'session' -or $null -eq $Row.Session.LogonTime) {
+            return @((Format-Fixed -Text '—' -Width $W.LOGON), $P.TitleDim)
+        }
+        $fmt = if ($W.LOGON -ge 16) { 'M/d/yyyy h:mm tt' } else { 'M/d h:mm tt' }
+        @((Format-Fixed -Text ($Row.Session.LogonTime.ToString($fmt)) -Width $W.LOGON), $P.Logon)
+    }
+    ACCOUNT = {
+        param($Row, $W, $P)
+        @((Format-Fixed -Text (Format-FleetAccount $Row) -Width $W.ACCOUNT), (Get-FleetAccountColor $Row))
+    }
+    NOTE = {
+        param($Row, $W, $P)
+        @((Format-Fixed -Text (Format-FleetNote $Row) -Width $W.NOTE), (Get-FleetNoteColor $Row))
+    }
+}
+
+function Format-FleetRow {
+    <#
+    .SYNOPSIS
+        Renders one fleet row as a colored ANSI line, honoring the active
+        width map. Columns absent from $Widths are skipped.
+    #>
+    param(
+        [Parameter(Mandatory)]$Row,
+        [Parameter(Mandatory)]$Widths
+    )
+
+    $p = $script:Palette
+    $cells = foreach ($col in $Widths.Keys) {
+        $renderer = $script:FleetCellRenderers[$col]
+        if (-not $renderer) { continue }
+        $pair = & $renderer $Row $Widths $p
+        $text  = $pair[0]
+        $color = $pair[1]
+        $color + $text + $p.Reset
+    }
+    ' ' + ($cells -join ' ')
+}
+
+function Format-FleetHeaderRow {
+    param([Parameter(Mandatory)]$Widths)
+    $p = $script:Palette
+    $cells = foreach ($col in $Widths.Keys) {
+        $w = $Widths[$col]
+        $color = if ($col -eq 'SERVER') { $p.Warning } else { $p.Header }
+        $color + (Format-Fixed -Text $col -Width $w) + $p.Reset
+    }
+    ' ' + ($cells -join ' ')
+}
+
+function Format-FleetDividerRow {
+    param([Parameter(Mandatory)]$Widths)
+    $p = $script:Palette
+    $cells = foreach ($col in $Widths.Keys) {
+        $w = $Widths[$col]
+        $p.TitleDim + ('─' * $w) + $p.Reset
+    }
+    ' ' + ($cells -join ' ')
+}
+
+function Write-FleetSummaryStrip {
+    <#
+    .SYNOPSIS
+        One-line FLEET summary strip above the table. Conditional chips
+        only render when their count > 0 (or host > 0 for offline/error).
+    #>
+    param(
+        [int]$Scanned,
+        [int]$WithSessions,
+        [int]$Total,
+        [int]$Active,
+        [int]$Disc,
+        [int]$Disabled,
+        [int]$Stale,
+        [int]$Current,
+        [int]$Offline,
+        [int]$Errored,
+        [TimeSpan]$Elapsed
+    )
+
+    $p = $script:Palette
+    $empty = $Scanned - $WithSessions
+    if ($empty -lt 0) { $empty = 0 }
+
+    $pipe = $p.TitleDim + ' | ' + $p.Reset
+    $parts = @()
+
+    # Always-present
+    $parts += $p.Bold + $p.TitleFg + 'FLEET' + $p.Reset
+    $parts += $p.Username + ('{0} hosts' -f $Scanned)    + $p.Reset
+    $parts += $p.Username + ('{0} active hosts' -f $WithSessions) + $p.Reset
+    $parts += $p.Username + ('{0} sessions' -f $Total)   + $p.Reset
+    $parts += $p.Active   + ('{0} active' -f $Active)    + $p.Reset
+    $parts += $p.Disc     + ('{0} disc' -f $Disc)        + $p.Reset
+
+    # Conditional
+    if ($Disabled -gt 0) { $parts += $p.Error   + ('{0} disabled' -f $Disabled) + $p.Reset }
+    if ($Stale    -gt 0) { $parts += $p.Warning + ('{0} stale'    -f $Stale)    + $p.Reset }
+    if ($Current  -gt 0) { $parts += $p.Current + ('{0} you'      -f $Current)  + $p.Reset }
+    if ($empty    -gt 0) { $parts += $p.TitleDim + ('{0} empty'   -f $empty)    + $p.Reset }
+    if ($Offline  -gt 0) { $parts += $p.TitleDim + ('{0} offline' -f $Offline)  + $p.Reset }
+    if ($Errored  -gt 0) { $parts += $p.Error   + ('{0} error'    -f $Errored)  + $p.Reset }
+
+    $parts += $p.TitleDim + ('{0:N1}s' -f $Elapsed.TotalSeconds) + $p.Reset
+
+    Write-AnsiLine (' ' + ($parts -join $pipe))
+}
+
+function Write-FleetGrid {
+    <#
+    .SYNOPSIS
+        Renders the fleet dashboard: a single full-width table of all
+        sessions plus synthetic rows for offline/errored hosts.
+    .PARAMETER Sessions
+        Filtered session objects.
+    .PARAMETER Offline
+        Objects with a Name property (or strings) for offline hosts.
+    .PARAMETER Errored
+        Objects with Server and Error properties for hosts that failed
+        the WTS scan.
+    .PARAMETER TerminalWidth
+        Override terminal width for testing; defaults to current window.
+    #>
+    param(
+        [object[]]$Sessions = @(),
+        [object[]]$Offline  = @(),
+        [object[]]$Errored  = @(),
+        [int]$TerminalWidth = [Math]::Max(80, [Console]::WindowWidth)
+    )
+
+    $widths = Get-FleetColWidths -TerminalWidth $TerminalWidth
+    $rows = Get-FleetOrderedRows -Sessions $Sessions -Offline $Offline -Errored $Errored
+
+    Write-AnsiLine (Format-FleetHeaderRow -Widths $widths)
+    Write-AnsiLine (Format-FleetDividerRow -Widths $widths)
+
+    if ($rows.Count -eq 0) {
+        $p = $script:Palette
+        Write-AnsiLine ('  ' + $p.TitleDim + '(no matching sessions)' + $p.Reset)
+        return
+    }
+
+    foreach ($row in $rows) {
+        Write-AnsiLine (Format-FleetRow -Row $row -Widths $widths)
+    }
+}
 
 function Get-FleetRowPriority {
     <#
@@ -355,15 +635,32 @@ function Format-IdleSpan {
 }
 
 function Format-State {
-    <# Abbreviates a WtsConnectState for the STATE column. #>
+    <# Abbreviates a WtsConnectState for the STATE column (≤4 chars). #>
     param([LISSTech.Wts.WtsConnectState]$State)
 
     switch ($State) {
+        'Active'       { 'Act' }
         'Disconnected' { 'Disc' }
         'Connected'    { 'Conn' }
-        'ConnectQuery' { 'ConnQ' }
+        'ConnectQuery' { 'CnQ' }
+        'Listen'       { 'Lsn' }
+        'Reset'        { 'Rst' }
+        'Shadow'       { 'Shw' }
+        'Idle'         { 'Idle' }
         default        { [string]$State }
     }
+}
+
+function Format-FleetIdle {
+    <# Compact idle formatter that fits a 7-char column without truncation.
+       <1m '-', <1h '{N}m', <1d 'H:MM', <7d '{D}d{H}h', >=7d '{D}d' #>
+    param([TimeSpan]$Span)
+
+    if ($Span -le [TimeSpan]::FromMinutes(1)) { return '-' }
+    if ($Span.TotalDays -ge 7)  { return ('{0}d' -f [math]::Floor($Span.TotalDays)) }
+    if ($Span.TotalDays -ge 1)  { return ('{0}d{1}h' -f [math]::Floor($Span.TotalDays), $Span.Hours) }
+    if ($Span.TotalHours -ge 1) { return ('{0}:{1:D2}' -f $Span.Hours, $Span.Minutes) }
+    '{0}m' -f [math]::Floor($Span.TotalMinutes)
 }
 
 function Format-CylonBar {
