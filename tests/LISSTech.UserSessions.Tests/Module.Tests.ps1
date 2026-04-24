@@ -91,9 +91,10 @@ Describe 'Parser hazards' {
         $offenders | Should -BeNullOrEmpty
     }
 
-    It 'has no return switch patterns' {
+    It 'rejects return-then-switch patterns' {
         $offenders = Get-ChildItem $ProjectRoot -Recurse -File -Include *.ps1, *.psm1 |
             Where-Object FullName -notlike '*\dist\*' |
+            Where-Object FullName -ne $PSCommandPath |
             ForEach-Object {
                 Select-String -Path $_.FullName -Pattern 'return\s+switch\b'
             }
