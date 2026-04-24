@@ -151,7 +151,7 @@ Describe 'Show-UserSession parameters' {
 
     It 'supports ShouldProcess with ConfirmImpact=High' {
         $cmd = Get-Command Show-UserSession
-        $attr = $cmd.ScriptBlock.Attributes.Where({ $_ -is [CmdletBindingAttribute] })[0]
+        $attr = $cmd.ScriptBlock.Attributes.Where({ $_ -is [System.Management.Automation.CmdletBindingAttribute] })[0]
         $attr.SupportsShouldProcess | Should -BeTrue
         $attr.ConfirmImpact         | Should -Be 'High'
     }
@@ -167,7 +167,7 @@ Describe 'Stop-UserSession parameters' {
 
     It 'supports ShouldProcess with ConfirmImpact=High' {
         $cmd = Get-Command Stop-UserSession
-        $attr = $cmd.ScriptBlock.Attributes.Where({ $_ -is [CmdletBindingAttribute] })[0]
+        $attr = $cmd.ScriptBlock.Attributes.Where({ $_ -is [System.Management.Automation.CmdletBindingAttribute] })[0]
         $attr.SupportsShouldProcess | Should -BeTrue
         $attr.ConfirmImpact         | Should -Be 'High'
     }
