@@ -1,0 +1,13 @@
+{
+  "name": "LISSTech.UserSessions",
+  "short_name": "UserSessions",
+  "description": "Enumerate, audit, and log off Windows Terminal Services sessions across Active Directory.",
+  "start_url": "/LISSTech.UserSessions/",
+  "display": "standalone",
+  "background_color": "#0b1026",
+  "theme_color": "#1a1b4b",
+  "icons": [
+    { "src": "android-chrome-192x192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "android-chrome-512x512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

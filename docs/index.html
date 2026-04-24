@@ -3,8 +3,76 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LISSTech.UserSessions — Terminal Services, Respectfully.</title>
-<meta name="description" content="Enumerate, audit, and log off Windows Terminal Services sessions across Active Directory. Dashboard, async parallel logoff, ticket-ready reports.">
+
+<!-- Primary Meta -->
+<title>LISSTech.UserSessions — Enumerate, Audit &amp; Log Off Terminal Services Sessions</title>
+<meta name="description" content="PowerShell module for MSPs to enumerate, audit, and log off Windows Terminal Services sessions across Active Directory. Rich ANSI dashboard, async parallel logoff, ticket-ready markdown &amp; HTML reports. Zero dependencies, PS 5.1+.">
+<meta name="keywords" content="PowerShell, Terminal Services, RDP, sessions, logoff, Active Directory, MSP, WTS, Remote Desktop, Windows Server, session management, LISS Technologies, LISSTech">
+<meta name="author" content="LISS Consulting, Corp.">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://lissconsulting.github.io/LISSTech.UserSessions/">
+
+<!-- Favicon -->
+<link rel="icon" type="image/x-icon" href="favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<link rel="manifest" href="site.webmanifest">
+<meta name="theme-color" content="#1a1b4b">
+<meta name="msapplication-TileColor" content="#0b1026">
+
+<!-- Open Graph / Facebook / LinkedIn / Slack / Teams -->
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://lissconsulting.github.io/LISSTech.UserSessions/">
+<meta property="og:title" content="LISSTech.UserSessions — Terminal Services, Respectfully.">
+<meta property="og:description" content="PowerShell module for MSPs: enumerate, audit, and log off Windows Terminal Services sessions across Active Directory. Dashboard, async parallel logoff, ticket-ready reports.">
+<meta property="og:image" content="https://lissconsulting.github.io/LISSTech.UserSessions/assets/social-preview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="LISSTech.UserSessions — session management for MSPs">
+<meta property="og:site_name" content="LISS Technologies">
+<meta property="og:locale" content="en_US">
+
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="LISSTech.UserSessions — Terminal Services, Respectfully.">
+<meta name="twitter:description" content="PowerShell module for MSPs: enumerate, audit, and log off Windows Terminal Services sessions across AD. Dashboard, parallel logoff, ticket-ready reports.">
+<meta name="twitter:image" content="https://lissconsulting.github.io/LISSTech.UserSessions/assets/social-preview.png">
+<meta name="twitter:image:alt" content="LISSTech.UserSessions — session management for MSPs">
+
+<!-- JSON-LD Structured Data -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "LISSTech.UserSessions",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Windows",
+  "description": "PowerShell module for MSPs to enumerate, audit, and log off Windows Terminal Services sessions across Active Directory. Rich ANSI dashboard, async parallel logoff, ticket-ready markdown and HTML reports.",
+  "url": "https://lissconsulting.github.io/LISSTech.UserSessions/",
+  "downloadUrl": "https://www.powershellgallery.com/packages/LISSTech.UserSessions",
+  "softwareVersion": "26.113.2",
+  "license": "https://github.com/LISSConsulting/LISSTech.UserSessions/blob/trunk/LICENSE",
+  "author": {
+    "@type": "Organization",
+    "name": "LISS Consulting, Corp.",
+    "url": "https://lisstech.com"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "LISS Consulting, Corp.",
+    "url": "https://lisstech.com"
+  },
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  },
+  "image": "https://lissconsulting.github.io/LISSTech.UserSessions/assets/social-preview.png",
+  "screenshot": "https://lissconsulting.github.io/LISSTech.UserSessions/assets/social-preview.png"
+}
+</script>
+
 <style>
   /* ================================================================
      RETROBRUTAL + BAROQUE + STARRY NIGHT
@@ -647,6 +715,52 @@
     line-height: 1.45;
   }
 
+  /* ============================================================ CTA */
+  .cta {
+    padding: 5rem 0;
+    background:
+      radial-gradient(ellipse 80% 60% at 50% 50%, rgba(45,58,140,0.3) 0%, transparent 100%);
+  }
+  .cta-frame {
+    background: var(--night-mid);
+    border: var(--border-lg);
+    box-shadow: var(--shadow-lg);
+    padding: 3.5rem;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .cta-frame::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 5px;
+    background: linear-gradient(90deg, var(--star-gold), var(--cobalt-light), var(--star-bright), var(--cobalt), var(--star-gold));
+  }
+  .cta-content h2 {
+    font-size: 2rem;
+    font-weight: 900;
+    color: var(--white);
+    margin-bottom: 1rem;
+  }
+  .cta-content h2 em {
+    color: var(--star-gold);
+    font-style: italic;
+  }
+  .cta-content p {
+    font-size: 1.05rem;
+    color: var(--moon);
+    max-width: 600px;
+    margin: 0 auto 2rem;
+    line-height: 1.6;
+  }
+  .cta-actions {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
   /* ============================================================ FOOTER */
   footer.site-footer {
     background: var(--night-mid);
@@ -660,12 +774,15 @@
     flex-wrap: wrap;
     gap: 1rem;
   }
-  .footer-brand {
+  .footer-brand a {
     font-family: "Playfair Display", serif;
     font-weight: 900;
     font-size: 1.2rem;
     color: var(--star-gold);
+    text-decoration: none;
+    transition: color 0.15s;
   }
+  .footer-brand a:hover { color: var(--star-bright); }
   .footer-brand span {
     font-weight: 400;
     font-style: italic;
@@ -1038,17 +1155,37 @@ Find-UserSession |
 
   <div class="flourish">&#10045; &middot; &#10045; &middot; &#10045;</div>
 
+  <!-- CTA — LISSTECH.COM FUNNEL -->
+  <section class="cta">
+    <div class="container">
+      <div class="cta-frame">
+        <div class="cta-content">
+          <h2 class="serif">Built by <em>LISS Technologies</em></h2>
+          <p>We build tools for MSPs who refuse to settle for "good enough." UserSessions is one piece of the LISSTech toolkit &mdash; purpose-built PowerShell modules for the managed services trenches.</p>
+          <div class="cta-actions">
+            <a href="https://lisstech.com" class="btn btn-primary" rel="noopener">Visit lisstech.com</a>
+            <a href="https://github.com/LISSConsulting" class="btn btn-secondary" rel="noopener">All LISSTech Projects</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="flourish">&#10045; &middot; &#10045; &middot; &#10045;</div>
+
   <!-- FOOTER -->
   <footer class="site-footer">
     <div class="container">
-      <div class="footer-brand">LISS <span>Technologies</span></div>
+      <div class="footer-brand"><a href="https://lisstech.com" rel="noopener">LISS <span>Technologies</span></a></div>
       <div class="footer-links">
+        <a href="https://lisstech.com" rel="noopener">lisstech.com</a>
         <a href="https://github.com/LISSConsulting/LISSTech.UserSessions">GitHub</a>
         <a href="https://www.powershellgallery.com/packages/LISSTech.UserSessions">PSGallery</a>
+        <a href="https://github.com/LISSConsulting" rel="noopener">All Projects</a>
         <a href="https://github.com/LISSConsulting/LISSTech.UserSessions/blob/trunk/LICENSE">Apache 2.0</a>
       </div>
       <div class="footer-copy">
-        <code>LISSTech.UserSessions</code> &middot; LISS Consulting, Corp. &middot; Terminal Services, respectfully.
+        <code>LISSTech.UserSessions</code> &middot; <a href="https://lisstech.com" rel="noopener" style="color:var(--cobalt-light);text-decoration:none;">LISS Consulting, Corp.</a> &middot; Terminal Services, respectfully.
       </div>
     </div>
   </footer>
