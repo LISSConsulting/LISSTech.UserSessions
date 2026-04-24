@@ -64,9 +64,17 @@ lint:
         Write-Host "      Install with: Install-Module PSScriptAnalyzer -Scope CurrentUser" -ForegroundColor DarkGray
         exit 1
     }
-    $results = Invoke-ScriptAnalyzer -Path '{{ justfile_directory() }}' -Recurse `
-        -ExcludeRule PSAvoidUsingWriteHost `
-        -Exclude '*/Release/*', '*/dist/*', '*/.git/*'
+    $pssaArgs = @{
+        Path         = '{{ justfile_directory() }}'
+        Recurse      = $true
+        ExcludeRule  = 'PSAvoidUsingWriteHost'
+    }
+    $results = Invoke-ScriptAnalyzer @pssaArgs |
+        Where-Object {
+            $_.ScriptPath -notlike '*\Release\*' -and
+            $_.ScriptPath -notlike '*\dist\*' -and
+            $_.ScriptPath -notlike '*\.git\*'
+        }
     if ($results) {
         $results | Format-Table -AutoSize
         Write-Host "   ❌ $($results.Count) issue(s) found" -ForegroundColor Red
