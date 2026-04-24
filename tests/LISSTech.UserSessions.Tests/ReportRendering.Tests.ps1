@@ -443,6 +443,44 @@ Describe 'Set-ClipboardHtml (PS7 MTA path)' {
     }
 }
 
+Describe 'Get-MarkdownSafe / markdown injection hardening' {
+
+    It 'escapes pipe characters in the value' {
+        & (Get-Module LISSTech.UserSessions) { Get-MarkdownSafe 'evil|host' } | Should -Be 'evil\|host'
+    }
+
+    It 'escapes backticks in the value' {
+        & (Get-Module LISSTech.UserSessions) { Get-MarkdownSafe 'with `code` inline' } | Should -Be 'with \`code\` inline'
+    }
+
+    It 'collapses newlines to spaces' {
+        $result = & (Get-Module LISSTech.UserSessions) { Get-MarkdownSafe "line1`nline2" }
+        $result | Should -Be 'line1 line2'
+    }
+
+    It 'returns empty string for $null' {
+        & (Get-Module LISSTech.UserSessions) { Get-MarkdownSafe $null } | Should -Be ''
+    }
+
+    It 'Server names with pipes do not break logoff-failures table' {
+        $logoff = [pscustomobject]@{
+            Succeeded = 0; Failed = 1; Skipped = 0
+            Failures = @([pscustomobject]@{
+                Server = 'evil|host'; Username = 'a|b'; SessionId = 1; Error = 'error|text'
+            })
+        }
+        $scan = New-FakeScanResult -Scanned 1 -Sessions @()
+        $md = & (Get-Module LISSTech.UserSessions) {
+            param($s, $l)
+            $ctx = New-ReportContext -ScanResult $s -FilteredSessions @() -LogoffResult $l -ScopeInfo @{}
+            Format-ReportMarkdown -Context $ctx
+        } $scan $logoff
+        $md | Should -Match 'evil\\\|host'
+        $md | Should -Match 'a\\\|b'
+        $md | Should -Match 'error\\\|text'
+    }
+}
+
 AfterAll {
     Remove-Module LISSTech.UserSessions -Force -ErrorAction SilentlyContinue
 }

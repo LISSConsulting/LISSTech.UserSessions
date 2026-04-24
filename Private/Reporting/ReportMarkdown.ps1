@@ -6,6 +6,18 @@
 # its own file so the composer here can evolve independently from HTML.
 # -----------------------------------------------------------------------------
 
+function Get-MarkdownSafe {
+    <#
+    .SYNOPSIS
+        Escape a string for safe placement inside a markdown pipe-table cell.
+        Escapes '|' and backticks; collapses CR/LF to a single space.
+    #>
+    param([string]$Value)
+    if ($null -eq $Value) { return '' }
+    $escaped = $Value -replace '\|', '\|' -replace '`', '\`'
+    $escaped -replace "`r?`n", ' '
+}
+
 function Format-ReportMarkdown {
     [CmdletBinding()]
     param(
@@ -73,7 +85,7 @@ function Get-MarkdownLogoffSection {
         [void]$sb.AppendLine('| Server | User | Session | Error |')
         [void]$sb.AppendLine('|---|---|---|---|')
         foreach ($f in $LogoffResult.Failures) {
-            [void]$sb.AppendLine(('| {0} | {1} | id{2} | {3} |' -f $f.Server, $f.Username, $f.SessionId, $f.Error))
+            [void]$sb.AppendLine(('| {0} | {1} | id{2} | {3} |' -f (Get-MarkdownSafe $f.Server), (Get-MarkdownSafe $f.Username), $f.SessionId, (Get-MarkdownSafe $f.Error)))
         }
         [void]$sb.AppendLine()
     }
@@ -115,10 +127,10 @@ function Get-MarkdownDisabledSection {
 
     foreach ($s in $DisabledSessions) {
         $fmtArgs = @(
-            $s.Server,
-            $s.Username,
+            (Get-MarkdownSafe $s.Server),
+            (Get-MarkdownSafe $s.Username),
             (Format-SessionStateShort $s.State),
-            $s.WinStation,
+            (Get-MarkdownSafe $s.WinStation),
             $s.SessionId,
             (Format-SessionIdleShort $s.IdleTime),
             (Format-SessionLogonShort $s)
@@ -149,6 +161,8 @@ function Get-MarkdownServerGroupsSection {
         foreach ($s in $group.Sessions) {
             $uname      = if ($s.IsUserDisabled) { "⚠ **$($s.Username)**" } else { $s.Username }
             $winStation = if ([string]::IsNullOrWhiteSpace($s.WinStation)) { '-' } else { $s.WinStation }
+            $uname      = Get-MarkdownSafe $uname
+            $winStation = Get-MarkdownSafe $winStation
             $fmtArgs = @(
                 $uname,
                 (Format-SessionStateShort $s.State),
@@ -171,7 +185,7 @@ function Get-MarkdownOfflineSection {
     $sb = [System.Text.StringBuilder]::new()
     [void]$sb.AppendLine('## Offline hosts')
     [void]$sb.AppendLine()
-    [void]$sb.AppendLine(($OfflineHosts -join ', '))
+    [void]$sb.AppendLine((($OfflineHosts | ForEach-Object { Get-MarkdownSafe $_ }) -join ', '))
     [void]$sb.AppendLine()
     $sb.ToString()
 }
@@ -184,9 +198,9 @@ function Get-MarkdownErroredSection {
     [void]$sb.AppendLine('## Errored hosts')
     [void]$sb.AppendLine()
     foreach ($g in $ErroredGroups) {
-        [void]$sb.AppendLine("**✗ $($g.Message)** — $($g.Count) host(s)")
+        [void]$sb.AppendLine("**✗ $(Get-MarkdownSafe $g.Message)** — $($g.Count) host(s)")
         [void]$sb.AppendLine()
-        [void]$sb.AppendLine(($g.Hosts -join ', '))
+        [void]$sb.AppendLine((($g.Hosts | ForEach-Object { Get-MarkdownSafe $_ }) -join ', '))
         [void]$sb.AppendLine()
     }
     $sb.ToString()
