@@ -319,3 +319,5 @@ Configure via `.env` (see `.env.example`):
 [![CalVer](https://img.shields.io/powershellgallery/v/LISSTech.UserSessions?style=for-the-badge&label=CalVer&color=FF6B9D&labelColor=000)](https://calver.org/)
 
 **LISS Consulting, Corp.** · *Terminal Services, respectfully.*
+
+<sub>Icon by [Nikita Golubev — Flaticon](https://www.flaticon.com/free-icons/advanced-training "advanced training icons")</sub>
